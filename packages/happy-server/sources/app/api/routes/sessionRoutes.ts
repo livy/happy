@@ -136,10 +136,20 @@ export function sessionRoutes(app: Fastify) {
         const userId = request.userId;
         const { cursor, limit = 50, changedSince } = request.query || {};
 
-        // Decode cursor - simple ID-based cursor
+        // Decode cursor. v2 cursors are based on (updatedAt desc, id desc)
+        // so pagination follows "most recently updated sessions" order.
         let cursorSessionId: string | undefined;
+        let cursorUpdatedAt: Date | undefined;
+        let legacyCursor = false;
         if (cursor) {
-            if (cursor.startsWith('cursor_v1_')) {
+            const v2Match = cursor.match(/^cursor_v2_(\d+)_(.+)$/);
+            if (v2Match) {
+                cursorUpdatedAt = new Date(Number(v2Match[1]));
+                cursorSessionId = v2Match[2];
+            } else if (cursor.startsWith('cursor_v1_')) {
+                // Backward compatibility for older clients. This keeps the
+                // original id-desc pagination semantics for v1 cursors.
+                legacyCursor = true;
                 cursorSessionId = cursor.substring(10);
             } else {
                 return reply.code(400).send({ error: 'Invalid cursor format' });
@@ -156,15 +166,25 @@ export function sessionRoutes(app: Fastify) {
             };
         }
 
-        // Add cursor pagination - always by ID descending (most recent first)
-        if (cursorSessionId) {
+        // Add cursor pagination in the same order as the query:
+        // updatedAt desc, id desc.
+        if (cursorSessionId && cursorUpdatedAt) {
+            where.OR = [
+                { updatedAt: { lt: cursorUpdatedAt } },
+                { updatedAt: cursorUpdatedAt, id: { lt: cursorSessionId } }
+            ];
+        } else if (cursorSessionId) {
             where.id = {
-                lt: cursorSessionId  // Get sessions with ID less than cursor (for desc order)
+                lt: cursorSessionId
             };
         }
 
-        // Always sort by ID descending for consistent pagination
-        const orderBy = { id: 'desc' as const };
+        const orderBy = legacyCursor
+            ? { id: 'desc' as const }
+            : [
+                { updatedAt: 'desc' as const },
+                { id: 'desc' as const }
+            ];
 
         const sessions = await db.session.findMany({
             where,
@@ -193,7 +213,7 @@ export function sessionRoutes(app: Fastify) {
         let nextCursor: string | null = null;
         if (hasNext && resultSessions.length > 0) {
             const lastSession = resultSessions[resultSessions.length - 1];
-            nextCursor = `cursor_v1_${lastSession.id}`;
+            nextCursor = `cursor_v2_${lastSession.updatedAt.getTime()}_${lastSession.id}`;
         }
 
         return reply.send({

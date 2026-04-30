@@ -132,6 +132,11 @@ export type SessionListViewItem =
     | { type: 'project-group'; displayPath: string; machine: Machine }
     | { type: 'session'; session: SessionRowData };
 
+export interface SessionPaginationState {
+    hasMore: boolean;
+    isLoadingMore: boolean;
+}
+
 // Legacy type for backward compatibility - to be removed
 export type SessionListItem = string | Session;
 
@@ -144,6 +149,7 @@ interface StorageState {
     sessions: Record<string, Session>;
     sessionsData: SessionListItem[] | null;  // Legacy - to be removed
     sessionListViewData: SessionListViewItem[] | null;
+    sessionPagination: SessionPaginationState;
     sessionMessages: Record<string, SessionMessages>;
     sessionGitStatus: Record<string, GitStatus | null>;
     sessionGitStatusFiles: Record<string, GitStatusFiles | null>;
@@ -167,6 +173,7 @@ interface StorageState {
     isDataReady: boolean;
     nativeUpdateStatus: { available: boolean; updateUrl?: string } | null;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => void;
+    applySessionPagination: (pagination: Partial<SessionPaginationState>) => void;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
     deleteMachine: (machineId: string) => void;
     applyLoaded: () => void;
@@ -238,9 +245,9 @@ function buildSessionListViewData(
         }
     });
 
-    // Sort by creation date (newest first) — matches applySessions behavior
-    activeSessions.sort((a, b) => b.createdAt - a.createdAt);
-    inactiveSessions.sort((a, b) => b.createdAt - a.createdAt);
+    // Sort by latest update so locally displayed order matches paged server order.
+    activeSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+    inactiveSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
 
     // Build unified list view data
     const listData: SessionListViewItem[] = [];
@@ -346,6 +353,10 @@ export const storage = create<StorageState>()((set, get) => {
         friendsLoaded: false,  // Initialize as false
         sessionsData: null,  // Legacy - to be removed
         sessionListViewData: null,
+        sessionPagination: {
+            hasMore: false,
+            isLoadingMore: false,
+        },
         sessionMessages: {},
         sessionGitStatus: {},
         sessionGitStatusFiles: {},
@@ -443,9 +454,9 @@ export const storage = create<StorageState>()((set, get) => {
                 }
             });
 
-            // Sort both arrays by creation date for stable ordering
-            activeSessions.sort((a, b) => b.createdAt - a.createdAt);
-            inactiveSessions.sort((a, b) => b.createdAt - a.createdAt);
+            // Sort both arrays by latest update to match server pagination order.
+            activeSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+            inactiveSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
 
             // Build flat list data for FlashList
             const listData: SessionListItem[] = [];
@@ -560,6 +571,13 @@ export const storage = create<StorageState>()((set, get) => {
                 sessionMessages: updatedSessionMessages
             };
         }),
+        applySessionPagination: (pagination: Partial<SessionPaginationState>) => set((state) => ({
+            ...state,
+            sessionPagination: {
+                ...state.sessionPagination,
+                ...pagination
+            }
+        })),
         applyLoaded: () => set((state) => {
             const result = {
                 ...state,
@@ -1338,6 +1356,10 @@ export function useMachine(machineId: string): Machine | null {
 
 export function useSessionListViewData(): SessionListViewItem[] | null {
     return storage(useDeepEqual((state) => state.isDataReady ? state.sessionListViewData : null));
+}
+
+export function useSessionPagination(): SessionPaginationState {
+    return storage(useShallow((state) => state.sessionPagination));
 }
 
 export function useAllSessions(): Session[] {

@@ -56,6 +56,28 @@ type V3GetSessionMessagesResponse = {
     hasMore: boolean;
 };
 
+type ApiSessionListItem = {
+    id: string;
+    tag?: string;
+    seq: number;
+    metadata: string;
+    metadataVersion: number;
+    agentState: string | null;
+    agentStateVersion: number;
+    dataEncryptionKey: string | null;
+    active: boolean;
+    activeAt: number;
+    createdAt: number;
+    updatedAt: number;
+    lastMessage?: ApiMessage | null;
+};
+
+type ApiSessionsPageResponse = {
+    sessions: ApiSessionListItem[];
+    nextCursor?: string | null;
+    hasNext?: boolean;
+};
+
 type V3PostSessionMessagesResponse = {
     messages: Array<{
         id: string;
@@ -78,6 +100,7 @@ type SendMessageOptions = {
 
 class Sync {
     private static readonly BACKGROUND_SEND_TIMEOUT_MS = 30_000;
+    private static readonly SESSIONS_PAGE_LIMIT = 50;
     encryption!: Encryption;
     serverID!: string;
     anonID!: string;
@@ -93,6 +116,9 @@ class Sync {
     private sessionQueueProcessing = new Set<string>();
     private sessionMessageLocks = new Map<string, AsyncLock>();
     private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
+    private sessionsNextCursor: string | null = null;
+    private sessionsHasMore = false;
+    private isLoadingMoreSessions = false;
     private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
     private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
     private settingsSync: InvalidateSync;
@@ -713,11 +739,20 @@ class Sync {
     // Private
     //
 
-    private fetchSessions = async () => {
-        if (!this.credentials) return;
+    private fetchSessionsPage = async (cursor?: string | null): Promise<ApiSessionsPageResponse> => {
+        if (!this.credentials) {
+            return { sessions: [], nextCursor: null, hasNext: false };
+        }
 
         const API_ENDPOINT = getServerUrl();
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions`, {
+        const params = new URLSearchParams({
+            limit: String(Sync.SESSIONS_PAGE_LIMIT),
+        });
+        if (cursor) {
+            params.set('cursor', cursor);
+        }
+
+        const response = await fetch(`${API_ENDPOINT}/v2/sessions?${params.toString()}`, {
             headers: {
                 'Authorization': `Bearer ${this.credentials.token}`,
                 'Content-Type': 'application/json',
@@ -729,22 +764,11 @@ class Sync {
             throw new Error(`Failed to fetch sessions: ${response.status}`);
         }
 
-        const data = await response.json();
-        const sessions = data.sessions as Array<{
-            id: string;
-            tag: string;
-            seq: number;
-            metadata: string;
-            metadataVersion: number;
-            agentState: string | null;
-            agentStateVersion: number;
-            dataEncryptionKey: string | null;
-            active: boolean;
-            activeAt: number;
-            createdAt: number;
-            updatedAt: number;
-            lastMessage: ApiMessage | null;
-        }>;
+        return await response.json() as ApiSessionsPageResponse;
+    }
+
+    private applySessionsPage = async (data: ApiSessionsPageResponse) => {
+        const sessions = data.sessions;
 
         // Initialize all session encryptions first
         const sessionKeys = new Map<string, Uint8Array | null>();
@@ -791,8 +815,21 @@ class Sync {
 
         // Apply to storage
         this.applySessions(decryptedSessions);
-        log.log(`📥 fetchSessions completed - processed ${decryptedSessions.length} sessions`);
+        log.log(`📥 applySessionsPage completed - processed ${decryptedSessions.length} sessions`);
+    }
 
+    private fetchSessions = async () => {
+        if (!this.credentials) return;
+
+        const data = await this.fetchSessionsPage(null);
+        await this.applySessionsPage(data);
+        this.sessionsNextCursor = data.nextCursor ?? null;
+        this.sessionsHasMore = !!data.hasNext;
+        storage.getState().applySessionPagination({
+            hasMore: this.sessionsHasMore,
+            isLoadingMore: false,
+        });
+        log.log(`📥 fetchSessions completed - first page loaded, hasMore=${this.sessionsHasMore}`);
     }
 
     public refreshMachines = async () => {
@@ -801,6 +838,32 @@ class Sync {
 
     public refreshSessions = async () => {
         return this.sessionsSync.invalidateAndAwait();
+    }
+
+    public loadMoreSessions = async () => {
+        if (!this.credentials || !this.sessionsHasMore || !this.sessionsNextCursor || this.isLoadingMoreSessions) {
+            return;
+        }
+
+        this.isLoadingMoreSessions = true;
+        storage.getState().applySessionPagination({ isLoadingMore: true });
+
+        try {
+            const data = await this.fetchSessionsPage(this.sessionsNextCursor);
+            await this.applySessionsPage(data);
+            this.sessionsNextCursor = data.nextCursor ?? null;
+            this.sessionsHasMore = !!data.hasNext;
+            storage.getState().applySessionPagination({
+                hasMore: this.sessionsHasMore,
+                isLoadingMore: false,
+            });
+            log.log(`📥 loadMoreSessions completed - hasMore=${this.sessionsHasMore}`);
+        } catch (error) {
+            storage.getState().applySessionPagination({ isLoadingMore: false });
+            throw error;
+        } finally {
+            this.isLoadingMoreSessions = false;
+        }
     }
 
     public getCredentials() {

@@ -8,6 +8,7 @@ import { authAccountApprove } from '@/auth/authAccountApprove';
 import { useCheckScannerPermissions } from '@/hooks/useCheckCameraPermissions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { QrScannerModal } from '@/components/qr/QrScannerModal';
 
 interface UseConnectAccountOptions {
     onSuccess?: () => void;
@@ -49,16 +50,49 @@ export function useConnectAccount(options?: UseConnectAccountOptions) {
         }
     }, [auth.credentials, options]);
 
+    const openFallbackScanner = React.useCallback(() => {
+        Modal.show({
+            component: QrScannerModal,
+            props: {
+                expectedPrefix: 'happy:///account?',
+                title: t('settings.scanQrCodeToAuthenticate'),
+                permissionMessage: t('modals.cameraPermissionsRequiredToScanQr'),
+                onScan: processAuthUrl,
+            },
+        });
+    }, [processAuthUrl]);
+
     const connectAccount = React.useCallback(async () => {
-        if (await checkScannerPermissions()) {
-            // Use camera scanner
-            CameraView.launchScanner({
+        if (Platform.OS === 'android') {
+            if (CameraView.isModernBarcodeScannerAvailable) {
+                try {
+                    await CameraView.launchScanner({
+                        barcodeTypes: ['qr']
+                    });
+                    return;
+                } catch (error) {
+                    console.warn('Failed to launch Android QR scanner, falling back to in-app camera', error);
+                }
+            }
+
+            openFallbackScanner();
+            return;
+        }
+
+        if (!(await checkScannerPermissions())) {
+            Modal.alert(t('common.error'), t('modals.cameraPermissionsRequiredToScanQr'), [{ text: t('common.ok') }]);
+            return;
+        }
+
+        try {
+            await CameraView.launchScanner({
                 barcodeTypes: ['qr']
             });
-        } else {
-            Modal.alert(t('common.error'), t('modals.cameraPermissionsRequiredToScanQr'), [{ text: t('common.ok') }]);
+        } catch (error) {
+            console.warn('Failed to launch scanner, falling back to in-app camera', error);
+            openFallbackScanner();
         }
-    }, [checkScannerPermissions]);
+    }, [checkScannerPermissions, openFallbackScanner]);
 
     const connectWithUrl = React.useCallback(async (url: string) => {
         return await processAuthUrl(url);

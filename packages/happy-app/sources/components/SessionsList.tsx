@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Pressable, FlatList, Platform } from 'react-native';
+import { ActivityIndicator, View, Pressable, FlatList, Platform } from 'react-native';
 import { Text } from '@/components/StyledText';
 import { usePathname } from 'expo-router';
-import { SessionListViewItem, SessionRowData } from '@/sync/storage';
+import { SessionListViewItem, SessionRowData, useSessionPagination } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { type SessionState, formatLastSeen, vibingMessages } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
@@ -21,6 +21,7 @@ import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPop
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
 import { useSettingMutable } from '@/sync/storage';
 import { t } from '@/text';
+import { sync } from '@/sync/sync';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -188,6 +189,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         ...Typography.default('semiBold'),
     },
+    loadMoreButton: {
+        minHeight: 44,
+        marginHorizontal: 16,
+        marginTop: 4,
+        marginBottom: 20,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: theme.colors.surface,
+    },
+    loadMoreText: {
+        fontSize: 14,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+    },
 }));
 
 export function SessionsList() {
@@ -196,6 +212,7 @@ export function SessionsList() {
     const data = useVisibleSessionListViewData();
     const pathname = usePathname();
     const isTablet = useIsTablet();
+    const sessionPagination = useSessionPagination();
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const toggleArchived = React.useCallback(() => {
         setHideInactiveSessions(!hideInactiveSessions);
@@ -312,7 +329,33 @@ export function SessionsList() {
         );
     }, []);
 
-    // Footer removed - all sessions now shown inline
+    const handleLoadMore = React.useCallback(() => {
+        void sync.loadMoreSessions().catch((error) => {
+            console.error('Failed to load more sessions:', error);
+        });
+    }, []);
+
+    const FooterComponent = React.useCallback(() => {
+        if (hideInactiveSessions || !sessionPagination.hasMore) {
+            return null;
+        }
+
+        return (
+            <Pressable
+                style={({ pressed }) => [styles.loadMoreButton, pressed && { opacity: 0.7 }]}
+                onPress={handleLoadMore}
+                disabled={sessionPagination.isLoadingMore}
+            >
+                {sessionPagination.isLoadingMore ? (
+                    <ActivityIndicator size="small" color={styles.loadMoreText.color} />
+                ) : (
+                    <Text style={styles.loadMoreText}>
+                        {t('sessionHistory.viewAll')}
+                    </Text>
+                )}
+            </Pressable>
+        );
+    }, [handleLoadMore, hideInactiveSessions, sessionPagination.hasMore, sessionPagination.isLoadingMore, styles]);
 
     return (
         <View style={styles.container}>
@@ -323,6 +366,7 @@ export function SessionsList() {
                     keyExtractor={keyExtractor}
                     contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
                     ListHeaderComponent={HeaderComponent}
+                    ListFooterComponent={FooterComponent}
                     windowSize={5}
                     maxToRenderPerBatch={8}
                     initialNumToRender={12}
