@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { readCredentials, clearCredentials, clearMachineId, readSettings } from '@/persistence';
+import { readCredentials, clearCredentials, readSettings } from '@/persistence';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { configuration } from '@/configuration';
 import { existsSync, rmSync } from 'node:fs';
@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { stopDaemon, checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import os from 'node:os';
+import { ensureDaemonRunning } from '@/daemon/ensureDaemonRunning';
 
 export async function handleAuthCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -60,8 +61,8 @@ async function handleAuthLogin(args: string[]): Promise<void> {
     console.log(chalk.yellow('Force authentication requested.'));
     console.log(chalk.gray('This will:'));
     console.log(chalk.gray('  • Clear existing credentials'));
-    console.log(chalk.gray('  • Clear machine ID'));
     console.log(chalk.gray('  • Stop daemon if running'));
+    console.log(chalk.gray('  • Keep this host machine ID so it merges with the existing device'));
     console.log(chalk.gray('  • Re-authenticate and register machine\n'));
 
     // Stop daemon if running
@@ -77,10 +78,6 @@ async function handleAuthLogin(args: string[]): Promise<void> {
     await clearCredentials();
     console.log(chalk.gray('✓ Cleared credentials'));
 
-    // Clear machine ID
-    await clearMachineId();
-    console.log(chalk.gray('✓ Cleared machine ID'));
-
     console.log('');
   }
 
@@ -94,6 +91,7 @@ async function handleAuthLogin(args: string[]): Promise<void> {
       console.log(chalk.gray(`  Machine ID: ${settings.machineId}`));
       console.log(chalk.gray(`  Host: ${os.hostname()}`));
       console.log(chalk.gray(`  Use 'happy auth login --force' to re-authenticate`));
+      await ensureDaemonRunning();
       return;
     } else if (existingCreds && !settings?.machineId) {
       console.log(chalk.yellow('⚠️  Credentials exist but machine ID is missing'));
@@ -106,6 +104,7 @@ async function handleAuthLogin(args: string[]): Promise<void> {
   // "Finally we'll run the auth and setup machine if needed"
   try {
     const result = await authAndSetupMachineIfNeeded();
+    await ensureDaemonRunning();
     console.log(chalk.green('\n✓ Authentication successful'));
     console.log(chalk.gray(`  Machine ID: ${result.machineId}`));
   } catch (error) {

@@ -8,7 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { useSessions, useAllMachines, useMachine } from '@/sync/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { Session } from '@/sync/storageTypes';
-import { machineStopDaemon, machineUpdateMetadata, machineDelete } from '@/sync/ops';
+import { machineStopDaemon, machineUpdateMetadata, machineDelete, machineSyncLocalSessions } from '@/sync/ops';
 import { Modal } from '@/modal';
 import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/utils/sessionUtils';
 import { isMachineOnline } from '@/utils/machineUtils';
@@ -73,6 +73,9 @@ export default function MachineDetailScreen() {
     const [isStoppingDaemon, setIsStoppingDaemon] = useState(false);
     const [isRenamingMachine, setIsRenamingMachine] = useState(false);
     const [isDeletingMachine, setIsDeletingMachine] = useState(false);
+    const [isSyncingLocalSessions, setIsSyncingLocalSessions] = useState(false);
+    const [localSessionsCursor, setLocalSessionsCursor] = useState<string | null>(null);
+    const [localSessionsHasMore, setLocalSessionsHasMore] = useState(false);
     const [customPath, setCustomPath] = useState('');
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
@@ -229,6 +232,36 @@ export default function MachineDetailScreen() {
             } finally {
                 setIsRenamingMachine(false);
             }
+        }
+    };
+
+    const handleSyncLocalSessions = async () => {
+        if (!machine || !machineId || !isMachineOnline(machine)) return;
+
+        setIsSyncingLocalSessions(true);
+        try {
+            const result = await machineSyncLocalSessions({
+                machineId,
+                limit: 50,
+                cursor: localSessionsHasMore ? localSessionsCursor : null,
+                flavor: 'all'
+            });
+            setLocalSessionsCursor(result.nextCursor);
+            setLocalSessionsHasMore(result.hasMore);
+            await sync.refreshSessionsForMachine(machineId);
+            Modal.alert(
+                'Local Sessions Synced',
+                result.hasMore
+                    ? `Synced ${result.imported} sessions. More local sessions are available.`
+                    : `Synced ${result.imported} sessions.`
+            );
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : 'Failed to sync local sessions'
+            );
+        } finally {
+            setIsSyncingLocalSessions(false);
         }
     };
 
@@ -474,6 +507,24 @@ export default function MachineDetailScreen() {
                                         name="stop-circle" 
                                         size={20} 
                                         color={daemonStatus === 'stopped' ? '#999' : '#FF9500'} 
+                                    />
+                                )
+                            }
+                        />
+                        <Item
+                            title={localSessionsHasMore ? 'Load more local sessions' : 'Sync local sessions'}
+                            subtitle="Import recent Claude history from this host"
+                            onPress={isMachineOnline(machine) ? handleSyncLocalSessions : undefined}
+                            disabled={isSyncingLocalSessions || !isMachineOnline(machine)}
+                            showChevron={false}
+                            rightElement={
+                                isSyncingLocalSessions ? (
+                                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                ) : (
+                                    <Ionicons
+                                        name="cloud-download-outline"
+                                        size={20}
+                                        color={isMachineOnline(machine) ? theme.colors.textSecondary : '#999'}
                                     />
                                 )
                             }

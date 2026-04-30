@@ -242,13 +242,17 @@ export function sessionRoutes(app: Fastify) {
                 tag: z.string(),
                 metadata: z.string(),
                 agentState: z.string().nullish(),
-                dataEncryptionKey: z.string().nullish()
+                dataEncryptionKey: z.string().nullish(),
+                active: z.boolean().optional(),
+                activeAt: z.number().optional(),
+                createdAt: z.number().optional(),
+                updatedAt: z.number().optional()
             })
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
-        const { tag, metadata, dataEncryptionKey } = request.body;
+        const { tag, metadata, agentState, dataEncryptionKey, active, activeAt, createdAt, updatedAt } = request.body;
 
         const session = await db.session.findFirst({
             where: {
@@ -286,7 +290,12 @@ export function sessionRoutes(app: Fastify) {
                     accountId: userId,
                     tag: tag,
                     metadata: metadata,
-                    dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined
+                    agentState: agentState ?? null,
+                    dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined,
+                    active: active ?? true,
+                    lastActiveAt: activeAt ? new Date(activeAt) : undefined,
+                    createdAt: createdAt ? new Date(createdAt) : undefined,
+                    updatedAt: updatedAt ? new Date(updatedAt) : undefined
                 }
             });
             log({ module: 'session-create', sessionId: session.id, userId }, `Session created: ${session.id}`);

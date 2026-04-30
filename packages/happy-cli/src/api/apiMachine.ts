@@ -14,6 +14,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
+import type { SyncLocalSessionsOptions, SyncLocalSessionsResult } from '@/daemon/syncLocalSessions';
 
 interface ServerToDaemonEvents {
     update: (data: Update) => void;
@@ -77,6 +78,7 @@ type MachineRpcHandlers = {
     resumeSession?: (sessionId: string, options?: { model?: string; permissionMode?: string }) => Promise<SpawnSessionResult>;
     stopSession: (sessionId: string) => boolean;
     requestShutdown: () => void;
+    syncLocalSessions?: (options: SyncLocalSessionsOptions) => Promise<SyncLocalSessionsResult>;
 }
 
 export class ApiMachineClient {
@@ -107,7 +109,8 @@ export class ApiMachineClient {
         spawnSession,
         resumeSession,
         stopSession,
-        requestShutdown
+        requestShutdown,
+        syncLocalSessions
     }: MachineRpcHandlers) {
         this.resumeSessionHandler = resumeSession ?? null;
 
@@ -137,6 +140,17 @@ export class ApiMachineClient {
         });
 
         this.syncResumeSessionRpcRegistration();
+
+        if (syncLocalSessions) {
+            this.rpcHandlerManager.registerHandler('sync-local-sessions', async (params: any) => {
+                const flavor = params?.flavor === 'claude' || params?.flavor === 'all' ? params.flavor : 'all';
+                return syncLocalSessions({
+                    limit: typeof params?.limit === 'number' ? params.limit : undefined,
+                    cursor: typeof params?.cursor === 'string' ? params.cursor : null,
+                    flavor,
+                });
+            });
+        }
 
         // Register stop session handler
         this.rpcHandlerManager.registerHandler('stop-session', (params: any) => {
@@ -355,6 +369,7 @@ export class ApiMachineClient {
                 logger.debugLargeJson(`[API MACHINE] Emitting machine-alive`, payload);
             }
             this.socket.emit('machine-alive', payload);
+            this.rpcHandlerManager.registerAllHandlers();
 
             // Re-detect CLI availability and push metadata update if changed
             const newAvailability = detectCLIAvailability();

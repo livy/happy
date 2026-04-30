@@ -62,6 +62,30 @@ import { handleCodexCommand } from './commands/codexCommand'
     }
     await runDoctorCommand();
     return;
+  } else if (subcommand === '--auth') {
+    // Backward compatibility for the old authentication flag.
+    try {
+      await handleAuthCommand(['login']);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
+      if (process.env.DEBUG) {
+        console.error(error)
+      }
+      process.exit(1)
+    }
+    return;
+  } else if (subcommand === '--force-auth') {
+    // Backward compatibility for the old force re-authentication flag.
+    try {
+      await handleAuthCommand(['login', '--force']);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
+      if (process.env.DEBUG) {
+        console.error(error)
+      }
+      process.exit(1)
+    }
+    return;
   } else if (subcommand === 'auth') {
     // Handle auth subcommands
     try {

@@ -58,6 +58,65 @@ function isSandboxEnabled(metadata: Session['metadata'] | null | undefined): boo
     return !!sandbox && typeof sandbox === 'object' && (sandbox as { enabled?: unknown }).enabled === true;
 }
 
+function machineMergeKey(machine: Machine): string {
+    const metadata = machine.metadata;
+    if (!metadata) {
+        return `id:${machine.id}`;
+    }
+    return [
+        metadata.host || '',
+        metadata.platform || '',
+        metadata.homeDir || '',
+        metadata.happyHomeDir || '',
+    ].join('\u0000') || `id:${machine.id}`;
+}
+
+function compareMachinePriority(a: Machine, b: Machine): number {
+    if (a.active !== b.active) {
+        return a.active ? -1 : 1;
+    }
+    const activeDelta = (b.activeAt || 0) - (a.activeAt || 0);
+    if (activeDelta !== 0) {
+        return activeDelta;
+    }
+    return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+}
+
+function dedupeMachines(machines: Machine[]): Machine[] {
+    const bestByKey = new Map<string, Machine>();
+    for (const machine of machines) {
+        const key = machineMergeKey(machine);
+        const current = bestByKey.get(key);
+        if (!current || compareMachinePriority(machine, current) < 0) {
+            bestByKey.set(key, machine);
+        }
+    }
+    return Array.from(bestByKey.values());
+}
+
+function isSessionInMachineScope(session: Session, machine: Machine | undefined): boolean {
+    if (!machine) {
+        return false;
+    }
+
+    if (session.metadata?.machineId === machine.id) {
+        return true;
+    }
+
+    const machineMetadata = machine.metadata;
+    const sessionMetadata = session.metadata;
+    if (!machineMetadata || !sessionMetadata) {
+        return false;
+    }
+
+    const sameHost = sessionMetadata.host === machineMetadata.host;
+    const sameHome = !!sessionMetadata.homeDir && sessionMetadata.homeDir === machineMetadata.homeDir;
+    const sameHappyHome = !!sessionMetadata.happyHomeDir && sessionMetadata.happyHomeDir === machineMetadata.happyHomeDir;
+    const samePlatform = !sessionMetadata.os || sessionMetadata.os === machineMetadata.platform;
+
+    return sameHost && sameHome && sameHappyHome && samePlatform;
+}
+
 // Known entitlement IDs
 export type KnownEntitlements = 'pro';
 
@@ -172,7 +231,10 @@ interface StorageState {
     socketLastDisconnectedAt: number | null;
     isDataReady: boolean;
     nativeUpdateStatus: { available: boolean; updateUrl?: string } | null;
-    applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => void;
+    applySessions: (
+        sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[],
+        options?: { replaceMachineIds?: string[] }
+    ) => void;
     applySessionPagination: (pagination: Partial<SessionPaginationState>) => void;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
     deleteMachine: (machineId: string) => void;
@@ -388,7 +450,10 @@ export const storage = create<StorageState>()((set, get) => {
             const state = get();
             return Object.values(state.sessions).filter(s => s.active);
         },
-        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => set((state) => {
+        applySessions: (
+            sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[],
+            options?: { replaceMachineIds?: string[] }
+        ) => set((state) => {
             // Load drafts and permission modes if sessions are empty (initial load)
             const isInitialLoad = Object.keys(state.sessions).length === 0;
             const savedDrafts = isInitialLoad ? sessionDrafts : {};
@@ -396,8 +461,25 @@ export const storage = create<StorageState>()((set, get) => {
             const savedModelModes = isInitialLoad ? sessionModelModes : {};
             const savedEffortLevels = isInitialLoad ? sessionEffortLevels : {};
 
-            // Merge new sessions with existing ones
-            const mergedSessions: Record<string, Session> = { ...state.sessions };
+            const replaceMachines = new Map(
+                (options?.replaceMachineIds ?? [])
+                    .map((machineId) => [machineId, state.machines[machineId]] as const)
+                    .filter(([, machine]) => !!machine)
+            );
+
+            const replacementIds = new Set(sessions.map((session) => session.id));
+            const removedSessionIds = new Set<string>();
+            const mergedSessions: Record<string, Session> = {};
+
+            Object.entries(state.sessions).forEach(([sessionId, session]) => {
+                const shouldReplace = Array.from(replaceMachines.values())
+                    .some((machine) => isSessionInMachineScope(session, machine));
+                if (shouldReplace && !replacementIds.has(sessionId)) {
+                    removedSessionIds.add(sessionId);
+                    return;
+                }
+                mergedSessions[sessionId] = session;
+            });
 
             // Update sessions with calculated presence using centralized resolver
             sessions.forEach(session => {
@@ -478,6 +560,9 @@ export const storage = create<StorageState>()((set, get) => {
 
             // Process AgentState updates for sessions that already have messages loaded
             const updatedSessionMessages = { ...state.sessionMessages };
+            removedSessionIds.forEach((sessionId) => {
+                delete updatedSessionMessages[sessionId];
+            });
 
             sessions.forEach(session => {
                 const oldSession = state.sessions[session.id];
@@ -1345,7 +1430,8 @@ export function useAllMachines(options?: { includeOffline?: boolean }): Machine[
     const includeOffline = options?.includeOffline ?? false;
     return storage(useShallow((state) => {
         if (!state.isDataReady) return [];
-        const machines = Object.values(state.machines).sort((a, b) => b.createdAt - a.createdAt);
+        const machines = dedupeMachines(Object.values(state.machines))
+            .sort((a, b) => compareMachinePriority(a, b));
         return includeOffline ? machines : machines.filter((v) => v.active);
     }));
 }

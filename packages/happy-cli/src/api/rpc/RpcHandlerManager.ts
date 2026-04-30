@@ -97,13 +97,20 @@ export class RpcHandlerManager {
 
     onSocketConnect(socket: Socket): void {
         this.socket = socket;
-        for (const [prefixedMethod] of this.handlers) {
-            socket.emit('rpc-register', { method: prefixedMethod });
-        }
+        this.registerAllHandlers();
     }
 
     onSocketDisconnect(): void {
         this.socket = null;
+    }
+
+    registerAllHandlers(): void {
+        if (!this.socket) {
+            return;
+        }
+        for (const [prefixedMethod] of this.handlers) {
+            this.socket.emit('rpc-register', { method: prefixedMethod });
+        }
     }
 
     /**

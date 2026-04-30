@@ -30,7 +30,11 @@ export class ApiClient {
   async getOrCreateSession(opts: {
     tag: string,
     metadata: Metadata,
-    state: AgentState | null
+    state: AgentState | null,
+    active?: boolean,
+    activeAt?: number,
+    createdAt?: number,
+    updatedAt?: number,
   }): Promise<Session | null> {
 
     // Resolve encryption key
@@ -64,6 +68,10 @@ export class ApiClient {
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
           agentState: opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null,
           dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : null,
+          active: opts.active,
+          activeAt: opts.activeAt,
+          createdAt: opts.createdAt,
+          updatedAt: opts.updatedAt,
         },
         {
           headers: {

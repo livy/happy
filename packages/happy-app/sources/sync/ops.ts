@@ -147,6 +147,28 @@ export interface ResumeSessionOptions {
     sessionId: string;
 }
 
+export interface MachineSyncLocalSessionsOptions {
+    machineId: string;
+    limit?: number;
+    cursor?: string | null;
+    flavor?: 'claude' | 'all';
+}
+
+export interface MachineSyncLocalSessionsResult {
+    imported: number;
+    scanned: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+    sessions: Array<{
+        id: string;
+        tag: string;
+        nativeSessionId: string;
+        path: string;
+        updatedAt: number;
+        flavor: 'claude';
+    }>;
+}
+
 // Exported session operation functions
 
 /**
@@ -194,6 +216,27 @@ export async function machineResumeSession(options: ResumeSessionOptions & { mod
             errorMessage: error instanceof Error ? error.message : 'Failed to resume session',
         };
     }
+}
+
+export async function machineSyncLocalSessions(options: MachineSyncLocalSessionsOptions): Promise<MachineSyncLocalSessionsResult> {
+    const { machineId, limit = 50, cursor = null, flavor = 'all' } = options;
+    const params = { limit, cursor, flavor };
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await apiSocket.machineRPC<MachineSyncLocalSessionsResult, typeof params>(
+                machineId,
+                'sync-local-sessions',
+                params
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.includes('RPC method not available') || attempt === 2) {
+                throw error;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+        }
+    }
+    throw new Error('RPC method not available');
 }
 
 /**

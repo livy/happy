@@ -78,6 +78,21 @@ type ApiSessionsPageResponse = {
     hasNext?: boolean;
 };
 
+type MachineSyncLocalSessionsResponse = {
+    imported: number;
+    scanned: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+    sessions: Array<{
+        id: string;
+        tag: string;
+        nativeSessionId: string;
+        path: string;
+        updatedAt: number;
+        flavor: 'claude';
+    }>;
+};
+
 type V3PostSessionMessagesResponse = {
     messages: Array<{
         id: string;
@@ -101,6 +116,7 @@ type SendMessageOptions = {
 class Sync {
     private static readonly BACKGROUND_SEND_TIMEOUT_MS = 30_000;
     private static readonly SESSIONS_PAGE_LIMIT = 50;
+    private static readonly AUTO_LOCAL_SESSION_SYNC_LIMIT = 50;
     encryption!: Encryption;
     serverID!: string;
     anonID!: string;
@@ -119,6 +135,9 @@ class Sync {
     private sessionsNextCursor: string | null = null;
     private sessionsHasMore = false;
     private isLoadingMoreSessions = false;
+    private sessionsReplaceMachineIds = new Set<string>();
+    private autoLocalSessionSyncAttempted = new Set<string>();
+    private autoLocalSessionSyncInFlight = new Set<string>();
     private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
     private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
     private settingsSync: InvalidateSync;
@@ -767,7 +786,10 @@ class Sync {
         return await response.json() as ApiSessionsPageResponse;
     }
 
-    private applySessionsPage = async (data: ApiSessionsPageResponse) => {
+    private applySessionsPage = async (
+        data: ApiSessionsPageResponse,
+        options?: { replaceMachineIds?: string[] }
+    ) => {
         const sessions = data.sessions;
 
         // Initialize all session encryptions first
@@ -814,15 +836,17 @@ class Sync {
         }
 
         // Apply to storage
-        this.applySessions(decryptedSessions);
+        this.applySessions(decryptedSessions, options);
         log.log(`📥 applySessionsPage completed - processed ${decryptedSessions.length} sessions`);
     }
 
     private fetchSessions = async () => {
         if (!this.credentials) return;
 
+        const replaceMachineIds = Array.from(this.sessionsReplaceMachineIds);
+        this.sessionsReplaceMachineIds.clear();
         const data = await this.fetchSessionsPage(null);
-        await this.applySessionsPage(data);
+        await this.applySessionsPage(data, replaceMachineIds.length > 0 ? { replaceMachineIds } : undefined);
         this.sessionsNextCursor = data.nextCursor ?? null;
         this.sessionsHasMore = !!data.hasNext;
         storage.getState().applySessionPagination({
@@ -837,6 +861,11 @@ class Sync {
     }
 
     public refreshSessions = async () => {
+        return this.sessionsSync.invalidateAndAwait();
+    }
+
+    public refreshSessionsForMachine = async (machineId: string) => {
+        this.sessionsReplaceMachineIds.add(machineId);
         return this.sessionsSync.invalidateAndAwait();
     }
 
@@ -1257,7 +1286,57 @@ class Sync {
 
         // Replace entire machine state with fetched machines
         storage.getState().applyMachines(decryptedMachines, true);
+        this.scheduleAutoLocalSessionSync(decryptedMachines);
         log.log(`🖥️ fetchMachines completed - processed ${decryptedMachines.length} machines`);
+    }
+
+    private scheduleAutoLocalSessionSync = (machines: Machine[]) => {
+        for (const machine of machines) {
+            if (!machine.active) {
+                continue;
+            }
+            if (this.autoLocalSessionSyncAttempted.has(machine.id) || this.autoLocalSessionSyncInFlight.has(machine.id)) {
+                continue;
+            }
+            void this.autoSyncLocalSessions(machine.id);
+        }
+    }
+
+    private autoSyncLocalSessions = async (machineId: string) => {
+        if (!this.credentials) {
+            return;
+        }
+        if (this.autoLocalSessionSyncInFlight.has(machineId)) {
+            return;
+        }
+
+        this.autoLocalSessionSyncAttempted.add(machineId);
+        this.autoLocalSessionSyncInFlight.add(machineId);
+        try {
+            const result = await apiSocket.machineRPC<MachineSyncLocalSessionsResponse, {
+                limit: number;
+                cursor: string | null;
+                flavor: 'claude' | 'all';
+            }>(
+                machineId,
+                'sync-local-sessions',
+                {
+                    limit: Sync.AUTO_LOCAL_SESSION_SYNC_LIMIT,
+                    cursor: null,
+                    flavor: 'all',
+                }
+            );
+
+            log.log(`🕘 autoSyncLocalSessions completed for ${machineId}: imported=${result.imported}, scanned=${result.scanned}, hasMore=${result.hasMore}`);
+            if (result.imported > 0) {
+                this.sessionsReplaceMachineIds.add(machineId);
+                this.sessionsSync.invalidate();
+            }
+        } catch (error) {
+            log.log(`🕘 autoSyncLocalSessions skipped for ${machineId}: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            this.autoLocalSessionSyncInFlight.delete(machineId);
+        }
     }
 
     private fetchFriends = async () => {
@@ -2073,6 +2152,7 @@ class Sync {
 
             // Update storage using applyMachines which rebuilds sessionListViewData
             storage.getState().applyMachines([updatedMachine]);
+            this.scheduleAutoLocalSessionSync([updatedMachine]);
         } else if (updateData.body.t === 'delete-machine') {
             const machineId = updateData.body.machineId;
             log.log(`🗑️ Delete machine update received for ${machineId}`);
@@ -2329,9 +2409,9 @@ class Sync {
 
     private applySessions = (sessions: (Omit<Session, "presence"> & {
         presence?: "online" | number;
-    })[]) => {
+    })[], options?: { replaceMachineIds?: string[] }) => {
         const active = storage.getState().getActiveSessions();
-        storage.getState().applySessions(sessions);
+        storage.getState().applySessions(sessions, options);
         const newActive = storage.getState().getActiveSessions();
         this.applySessionDiff(active, newActive);
     }
