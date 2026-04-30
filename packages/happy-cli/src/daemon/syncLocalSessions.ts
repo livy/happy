@@ -14,6 +14,7 @@ import {
   type CodexTurnState,
 } from '@/codex/utils/sessionProtocolMapper';
 import { configuration } from '@/configuration';
+import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
 import { projectPath } from '@/projectPath';
 import packageJson from '../../package.json';
 
@@ -96,6 +97,7 @@ type LocalSyncRawRecord =
       };
       meta: {
         sentFrom: 'cli';
+        displayText?: string;
       };
     }
   | {
@@ -646,6 +648,7 @@ async function readCodexHistoryMessages(file: CodexHistoryFile, limit: number, b
       if (text.length === 0) {
         continue;
       }
+      const displayText = getImportedUserMessageDisplayText(text);
       const order = mapped.length;
       mapped.push({
         localId: `local-codex:${file.sessionId}:${timestamp}:${order}`,
@@ -658,6 +661,7 @@ async function readCodexHistoryMessages(file: CodexHistoryFile, limit: number, b
           },
           meta: {
             sentFrom: 'cli',
+            ...(displayText !== text ? { displayText } : {}),
           },
         },
       });
@@ -832,6 +836,39 @@ function parseRecordTimestamp(value: unknown): number | null {
 function summarizeText(text: string): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
+}
+
+function getImportedUserMessageDisplayText(text: string): string {
+  return stripTrailingChangeTitleInstruction(stripLeadingHappySystemPrompt(text)).trim();
+}
+
+function stripTrailingChangeTitleInstruction(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.endsWith(CHANGE_TITLE_INSTRUCTION)) {
+    return trimmed;
+  }
+  return trimmed.slice(0, -CHANGE_TITLE_INSTRUCTION.length).trim();
+}
+
+function stripLeadingHappySystemPrompt(text: string): string {
+  const marker = '# Options';
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith(marker)) {
+    return text;
+  }
+
+  const instructionIndex = trimmed.indexOf(CHANGE_TITLE_INSTRUCTION);
+  if (instructionIndex === -1) {
+    return text;
+  }
+
+  const beforeInstruction = trimmed.slice(0, instructionIndex).trimEnd();
+  const separatorIndex = beforeInstruction.lastIndexOf('\n\n');
+  if (separatorIndex === -1) {
+    return text;
+  }
+
+  return `${beforeInstruction.slice(separatorIndex + 2).trim()}\n\n${trimmed.slice(instructionIndex).trimStart()}`;
 }
 
 function hasClaudeMessageContent(record: { type?: unknown; message?: unknown }): boolean {

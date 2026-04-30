@@ -39,6 +39,21 @@ describe('sessionFileLinks', () => {
         expect(parseSessionFileLink('mailto:test@example.com', { sessionRoot })).toBeNull();
     });
 
+    it('parses file urls as local file refs', () => {
+        const result = parseSessionFileLink('file:///Users/kirilldubovitskiy/projects/happy/output.pdf', {
+            sessionRoot,
+        });
+
+        expect(result).toEqual({
+            path: 'file:/Users/kirilldubovitskiy/projects/happy/output.pdf',
+            absolutePath: '/Users/kirilldubovitskiy/projects/happy/output.pdf',
+            relativePath: 'output.pdf',
+            withinSessionRoot: true,
+            line: null,
+            column: null,
+        });
+    });
+
     it('splits bare text into plain and linked segments', () => {
         const result = splitSessionFileText('Open packages/happy-cli/src/codex/runCodex.ts:594 please.', sessionRoot);
 

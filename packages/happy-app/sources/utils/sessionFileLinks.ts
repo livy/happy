@@ -269,7 +269,7 @@ export function parseSessionFileLink(
         return null;
     }
 
-    if (!WINDOWS_ABSOLUTE_PATH.test(trimmedUrl) && URL_SCHEME.test(trimmedUrl)) {
+    if (!WINDOWS_ABSOLUTE_PATH.test(trimmedUrl) && URL_SCHEME.test(trimmedUrl) && !FILE_URL_PREFIX.test(trimmedUrl)) {
         return null;
     }
 
