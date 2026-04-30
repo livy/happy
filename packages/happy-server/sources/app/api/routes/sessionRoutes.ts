@@ -8,6 +8,37 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { allocateUserSeq } from "@/storage/seq";
 import { sessionDelete } from "@/app/session/sessionDelete";
 
+const latestMessageSelect = {
+    orderBy: { seq: 'desc' as const },
+    take: 1,
+    select: {
+        createdAt: true,
+        localId: true
+    }
+};
+
+function getLocalImportMessageAt(localId: string | null): number | null {
+    if (!localId) {
+        return null;
+    }
+    const match = localId.match(/^local-(?:codex|claude):[^:]+:(\d{10,}):/);
+    if (!match) {
+        return null;
+    }
+    const timestamp = Number(match[1]);
+    return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getLastMessageAt(session: { messages?: Array<{ createdAt: Date; localId: string | null }> }): number | null {
+    const message = session.messages?.[0];
+    if (!message) {
+        return null;
+    }
+    const createdAt = message.createdAt.getTime();
+    const localImportAt = getLocalImportMessageAt(message.localId);
+    return localImportAt !== null ? Math.min(createdAt, localImportAt) : createdAt;
+}
+
 export function sessionRoutes(app: Fastify) {
 
     // Sessions API
@@ -32,31 +63,20 @@ export function sessionRoutes(app: Fastify) {
                 dataEncryptionKey: true,
                 active: true,
                 lastActiveAt: true,
-                // messages: {
-                //     orderBy: { seq: 'desc' },
-                //     take: 1,
-                //     select: {
-                //         id: true,
-                //         seq: true,
-                //         content: true,
-                //         localId: true,
-                //         createdAt: true
-                //     }
-                // }
+                messages: latestMessageSelect
             }
         });
 
         return reply.send({
             sessions: sessions.map((v) => {
-                // const lastMessage = v.messages[0];
                 const sessionUpdatedAt = v.updatedAt.getTime();
-                // const lastMessageCreatedAt = lastMessage ? lastMessage.createdAt.getTime() : 0;
 
                 return {
                     id: v.id,
                     seq: v.seq,
                     createdAt: v.createdAt.getTime(),
                     updatedAt: sessionUpdatedAt,
+                    lastMessageAt: getLastMessageAt(v),
                     active: v.active,
                     activeAt: v.lastActiveAt.getTime(),
                     metadata: v.metadata,
@@ -102,6 +122,7 @@ export function sessionRoutes(app: Fastify) {
                 dataEncryptionKey: true,
                 active: true,
                 lastActiveAt: true,
+                messages: latestMessageSelect,
             }
         });
 
@@ -111,6 +132,7 @@ export function sessionRoutes(app: Fastify) {
                 seq: v.seq,
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime(),
+                lastMessageAt: getLastMessageAt(v),
                 active: v.active,
                 activeAt: v.lastActiveAt.getTime(),
                 metadata: v.metadata,
@@ -202,6 +224,7 @@ export function sessionRoutes(app: Fastify) {
                 dataEncryptionKey: true,
                 active: true,
                 lastActiveAt: true,
+                messages: latestMessageSelect,
             }
         });
 
@@ -222,6 +245,7 @@ export function sessionRoutes(app: Fastify) {
                 seq: v.seq,
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime(),
+                lastMessageAt: getLastMessageAt(v),
                 active: v.active,
                 activeAt: v.lastActiveAt.getTime(),
                 metadata: v.metadata,

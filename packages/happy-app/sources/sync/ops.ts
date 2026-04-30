@@ -151,7 +151,7 @@ export interface MachineSyncLocalSessionsOptions {
     machineId: string;
     limit?: number;
     cursor?: string | null;
-    flavor?: 'claude' | 'all';
+    flavor?: 'claude' | 'codex' | 'all';
 }
 
 export interface MachineSyncLocalSessionsResult {
@@ -164,9 +164,28 @@ export interface MachineSyncLocalSessionsResult {
         tag: string;
         nativeSessionId: string;
         path: string;
+        title: string | null;
         updatedAt: number;
-        flavor: 'claude';
+        flavor: 'claude' | 'codex';
     }>;
+}
+
+export interface MachineSyncLocalSessionMessagesOptions {
+    machineId: string;
+    nativeSessionId: string;
+    limit?: number;
+    flavor?: 'claude' | 'codex' | 'all';
+    beforeCreatedAt?: number | null;
+}
+
+export interface MachineSyncLocalSessionMessagesResult {
+    found: boolean;
+    records: Array<{
+        localId: string;
+        createdAt: number;
+        record: any;
+    }>;
+    hasMore: boolean;
 }
 
 // Exported session operation functions
@@ -237,6 +256,15 @@ export async function machineSyncLocalSessions(options: MachineSyncLocalSessions
         }
     }
     throw new Error('RPC method not available');
+}
+
+export async function machineSyncLocalSessionMessages(options: MachineSyncLocalSessionMessagesOptions): Promise<MachineSyncLocalSessionMessagesResult> {
+    const { machineId, nativeSessionId, limit = 1000, flavor, beforeCreatedAt = null } = options;
+    return await apiSocket.machineRPC<MachineSyncLocalSessionMessagesResult, { nativeSessionId: string; limit: number; flavor?: 'claude' | 'codex' | 'all'; beforeCreatedAt?: number | null }>(
+        machineId,
+        'sync-local-session-messages',
+        { nativeSessionId, limit, flavor, beforeCreatedAt }
+    );
 }
 
 /**

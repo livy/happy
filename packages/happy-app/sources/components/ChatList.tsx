@@ -10,6 +10,7 @@ import { ChatFooter } from './ChatFooter';
 import { Message } from '@/sync/typesMessage';
 import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { sync } from '@/sync/sync';
 
 const SCROLL_THRESHOLD = 300;
 
@@ -66,6 +67,10 @@ const ChatListInternal = React.memo((props: {
         }
     }, []);
 
+    const loadOlderMessages = useCallback(() => {
+        void sync.loadOlderLocalSessionMessages(props.sessionId);
+    }, [props.sessionId]);
+
     const scrollToBottom = useCallback(() => {
         flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
     }, []);
@@ -100,6 +105,8 @@ const ChatListInternal = React.memo((props: {
                 keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
                 renderItem={renderItem}
                 onScroll={handleScroll}
+                onEndReached={loadOlderMessages}
+                onEndReachedThreshold={0.35}
                 onContentSizeChange={onContentSizeChange}
                 scrollEventThrottle={16}
                 ListHeaderComponent={<ListFooter sessionId={props.sessionId} />}

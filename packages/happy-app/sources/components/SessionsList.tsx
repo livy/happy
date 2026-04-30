@@ -129,7 +129,28 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionSubtitle: {
         fontSize: 13,
         color: theme.colors.textSecondary,
-        marginBottom: 4,
+        marginBottom: 2,
+        ...Typography.default(),
+    },
+    sessionMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        minHeight: 14,
+        marginBottom: 3,
+    },
+    sessionMetaItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginRight: 10,
+        minWidth: 0,
+        flexShrink: 1,
+    },
+    sessionMetaText: {
+        fontSize: 11,
+        lineHeight: 14,
+        color: theme.colors.textSecondary,
+        marginLeft: 3,
+        flexShrink: 1,
         ...Typography.default(),
     },
     statusRow: {
@@ -383,6 +404,37 @@ const STATUS_CONFIG: Record<SessionState, { color: string; dotColor: string; isP
     permission_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
 };
 
+const SessionMetaRow = React.memo(({ session }: { session: SessionRowData }) => {
+    const styles = stylesheet;
+
+    return (
+        <View style={styles.sessionMetaRow}>
+            <View style={styles.sessionMetaItem}>
+                <Ionicons
+                    name={session.flavor === 'codex' ? 'terminal-outline' : 'sparkles-outline'}
+                    size={11}
+                    color={styles.sessionMetaText.color}
+                />
+                <Text style={styles.sessionMetaText} numberOfLines={1}>
+                    {session.agentLabel}
+                </Text>
+            </View>
+            {!!session.machineName && (
+                <View style={styles.sessionMetaItem}>
+                    <Ionicons
+                        name="desktop-outline"
+                        size={11}
+                        color={styles.sessionMetaText.color}
+                    />
+                    <Text style={styles.sessionMetaText} numberOfLines={1}>
+                        {session.machineName}
+                    </Text>
+                </View>
+            )}
+        </View>
+    );
+});
+
 const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }: {
     session: SessionRowData;
     selected?: boolean;
@@ -402,7 +454,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
     const statusText = session.state === 'thinking'
         ? vibingMessage
         : session.state === 'disconnected'
-            ? t('status.lastSeen', { time: formatLastSeen(session.activeAt!, false) })
+            ? t('status.lastSeen', { time: formatLastSeen(session.lastConversationAt, false) })
             : session.state === 'permission_required'
                 ? t('status.permissionRequired')
                 : t('status.online');
@@ -471,6 +523,8 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                 <Text style={styles.sessionSubtitle} numberOfLines={1}>
                     {session.subtitle}
                 </Text>
+
+                <SessionMetaRow session={session} />
 
                 <View style={styles.statusRow}>
                     <View style={styles.statusDotContainer}>

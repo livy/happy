@@ -164,6 +164,38 @@ const MachineSeparator = React.memo(({ machineName, machineId }: { machineName: 
     );
 });
 
+const SessionMetaRow = React.memo(({ session }: { session: SessionRowData }) => {
+    const styles = stylesheet;
+    const { theme } = useUnistyles();
+
+    return (
+        <View style={styles.sessionMetaRow}>
+            <View style={styles.sessionMetaItem}>
+                <Ionicons
+                    name={session.flavor === 'codex' ? 'terminal-outline' : 'sparkles-outline'}
+                    size={10}
+                    color={theme.colors.textSecondary}
+                />
+                <Text style={styles.sessionMetaText} numberOfLines={1}>
+                    {session.agentLabel}
+                </Text>
+            </View>
+            {!!session.machineName && (
+                <View style={styles.sessionMetaItem}>
+                    <Ionicons
+                        name="desktop-outline"
+                        size={10}
+                        color={theme.colors.textSecondary}
+                    />
+                    <Text style={styles.sessionMetaText} numberOfLines={1}>
+                        {session.machineName}
+                    </Text>
+                </View>
+            )}
+        </View>
+    );
+});
+
 export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: ActiveSessionsGroupProps) {
     const styles = stylesheet;
     const machines = useAllMachines();
@@ -362,11 +394,12 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
                             styles.sessionTitle,
                             status.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected
                         ]}
-                        numberOfLines={2}
+                        numberOfLines={1}
                     >
                         {session.name}
                     </Text>
                 </View>
+                <SessionMetaRow session={session} />
             </View>
         </Pressable>
     );
@@ -510,7 +543,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // Session row styles
     sessionRow: {
-        height: 56,
+        height: 62,
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
@@ -534,6 +567,28 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionTitle: {
         fontSize: 15,
         flex: 1,
+        ...Typography.default('regular'),
+    },
+    sessionMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        minHeight: 13,
+        marginTop: 2,
+        paddingLeft: 24,
+    },
+    sessionMetaItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginRight: 10,
+        minWidth: 0,
+        flexShrink: 1,
+    },
+    sessionMetaText: {
+        fontSize: 10,
+        lineHeight: 13,
+        color: theme.colors.textSecondary,
+        marginLeft: 3,
+        flexShrink: 1,
         ...Typography.default('regular'),
     },
     sessionTitleConnected: {

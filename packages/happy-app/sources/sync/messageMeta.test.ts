@@ -44,4 +44,19 @@ describe('resolveMessageModeMeta', () => {
             model: null,
         });
     });
+
+    it('uses host current model when no local model override exists', () => {
+        const meta = resolveMessageModeMeta({
+            permissionMode: null,
+            modelMode: null,
+            metadata: {
+                currentModelCode: 'gpt-5.4',
+            },
+        } as any);
+
+        expect(meta).toEqual({
+            permissionMode: 'default',
+            model: 'gpt-5.4',
+        });
+    });
 });

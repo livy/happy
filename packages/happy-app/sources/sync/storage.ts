@@ -40,7 +40,14 @@ const REALTIME_MODE_DEBOUNCE_MS = 150;
  * Centralized session online state resolver
  * Returns either "online" (string) or a timestamp (number) for last seen
  */
-function resolveSessionOnlineState(session: { active: boolean; activeAt: number }): "online" | number {
+function isArchivedSession(session: { metadata?: { lifecycleState?: string | null } | null }): boolean {
+    return session.metadata?.lifecycleState === 'archived';
+}
+
+function resolveSessionOnlineState(session: { active: boolean; activeAt: number; metadata?: { lifecycleState?: string | null } | null }): "online" | number {
+    if (isArchivedSession(session)) {
+        return session.activeAt;
+    }
     // Session is online if the active flag is true
     return session.active ? "online" : session.activeAt;
 }
@@ -48,9 +55,77 @@ function resolveSessionOnlineState(session: { active: boolean; activeAt: number 
 /**
  * Checks if a session should be shown in the active sessions group
  */
-function isSessionActive(session: { active: boolean; activeAt: number }): boolean {
+function isSessionActive(session: { active: boolean; activeAt: number; metadata?: { lifecycleState?: string | null } | null }): boolean {
+    if (isArchivedSession(session)) {
+        return false;
+    }
     // Use the active flag directly, no timeout checks
     return session.active;
+}
+
+function getSessionConversationAt(session: Pick<Session, 'lastMessageAt' | 'createdAt' | 'updatedAt' | 'metadata'>): number {
+    const archivedAt = isArchivedSession(session)
+        ? session.metadata?.lifecycleStateSince ?? session.metadata?.summary?.updatedAt
+        : undefined;
+
+    if (typeof session.lastMessageAt === 'number' && typeof archivedAt === 'number') {
+        return Math.min(session.lastMessageAt, archivedAt);
+    }
+    if (typeof session.lastMessageAt === 'number') {
+        return session.lastMessageAt;
+    }
+    if (typeof archivedAt === 'number') {
+        return archivedAt;
+    }
+    if (session.lastMessageAt === null) {
+        return session.createdAt;
+    }
+    return session.updatedAt || session.createdAt;
+}
+
+function getMessageConversationAt(message: Pick<NormalizedMessage, 'createdAt' | 'localId'>): number {
+    if (typeof message.localId === 'string') {
+        const match = message.localId.match(/^local-(?:codex|claude):[^:]+:(\d{10,}):/);
+        if (match) {
+            const timestamp = Number(match[1]);
+            if (Number.isFinite(timestamp)) {
+                return timestamp;
+            }
+        }
+    }
+    return message.createdAt;
+}
+
+function getMessageLocalOrder(message: Pick<Message, 'id' | 'createdAt'> & { localId?: string | null }): number {
+    if (typeof message.localId === 'string') {
+        const match = message.localId.match(/^local-(?:codex|claude):[^:]+:\d{10,}:(\d+)/);
+        if (match) {
+            const order = Number(match[1]);
+            if (Number.isFinite(order)) {
+                return order;
+            }
+        }
+    }
+    return 0;
+}
+
+function compareMessagesNewestFirst(
+    a: Pick<Message, 'id' | 'createdAt'> & { localId?: string | null },
+    b: Pick<Message, 'id' | 'createdAt'> & { localId?: string | null },
+): number {
+    const aTime = getMessageConversationAt({ createdAt: a.createdAt, localId: a.localId ?? null });
+    const bTime = getMessageConversationAt({ createdAt: b.createdAt, localId: b.localId ?? null });
+    if (aTime !== bTime) {
+        return bTime - aTime;
+    }
+
+    const aOrder = getMessageLocalOrder(a);
+    const bOrder = getMessageLocalOrder(b);
+    if (aOrder !== bOrder) {
+        return bOrder - aOrder;
+    }
+
+    return b.id.localeCompare(a.id);
 }
 
 function isSandboxEnabled(metadata: Session['metadata'] | null | undefined): boolean {
@@ -136,23 +211,53 @@ export interface SessionRowData {
     subtitle: string;
     avatarId: string;
     flavor: string | null;
+    agentLabel: string;
     state: SessionState;
     // Only present on inactive sessions — active sessions never show "last seen"
     // and activeAt updates on every heartbeat, causing needless deep-equal diffs
     activeAt?: number;
+    lastConversationAt: number;
     createdAt?: number;
     hasDraft: boolean;
     active: boolean;
     machineId: string | null;
+    machineName: string | null;
     path: string | null;
     homeDir: string | null;
     completedTodosCount: number;
     totalTodosCount: number;
 }
 
-function buildSessionRowData(session: Session): SessionRowData {
+function getAgentLabel(flavor: string | null | undefined): string {
+    if (flavor === 'codex') {
+        return 'Codex';
+    }
+    if (flavor === 'gemini') {
+        return 'Gemini';
+    }
+    if (flavor === 'openclaw') {
+        return 'OpenClaw';
+    }
+    if (!flavor || flavor === 'claude') {
+        return 'Claude';
+    }
+    return flavor.charAt(0).toUpperCase() + flavor.slice(1);
+}
+
+function getSessionMachineName(session: Session, machines: Record<string, Machine>): string | null {
+    const machineId = session.metadata?.machineId;
+    const machine = machineId ? machines[machineId] : undefined;
+    return machine?.metadata?.displayName
+        || machine?.metadata?.host
+        || session.metadata?.host
+        || machineId
+        || null;
+}
+
+function buildSessionRowData(session: Session, machines: Record<string, Machine> = {}): SessionRowData {
     const isOnline = session.presence === "online";
     const hasPermissions = !!(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0);
+    const flavor = session.metadata?.flavor ?? null;
 
     let state: SessionState;
     if (!isOnline) {
@@ -170,12 +275,18 @@ function buildSessionRowData(session: Session): SessionRowData {
         name: getSessionName(session),
         subtitle: getSessionSubtitle(session),
         avatarId: getSessionAvatarId(session),
-        flavor: session.metadata?.flavor ?? null,
+        flavor,
+        agentLabel: getAgentLabel(flavor),
         state,
-        ...(!session.active && { activeAt: session.activeAt, createdAt: session.createdAt }),
+        lastConversationAt: getSessionConversationAt(session),
+        ...(!session.active && {
+            activeAt: session.activeAt,
+            createdAt: session.createdAt,
+        }),
         hasDraft: !!session.draft,
         active: session.active,
         machineId: session.metadata?.machineId ?? null,
+        machineName: getSessionMachineName(session, machines),
         path: session.metadata?.path ?? null,
         homeDir: session.metadata?.homeDir ?? null,
         completedTodosCount: session.todos?.filter(todo => todo.status === 'completed').length ?? 0,
@@ -242,6 +353,7 @@ interface StorageState {
     applyReady: () => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[], hasReadyEvent: boolean };
     applyMessagesLoaded: (sessionId: string) => void;
+    resetSessionMessages: (sessionId: string) => void;
     applySettings: (settings: Settings, version: number) => void;
     applySettingsLocal: (settings: Partial<Settings>) => void;
     applyLocalSettings: (settings: Partial<LocalSettings>) => void;
@@ -293,7 +405,8 @@ interface StorageState {
 
 // Helper function to build unified list view data from sessions and machines
 function buildSessionListViewData(
-    sessions: Record<string, Session>
+    sessions: Record<string, Session>,
+    machines: Record<string, Machine> = {}
 ): SessionListViewItem[] {
     // Separate active and inactive sessions
     const activeSessions: Session[] = [];
@@ -308,15 +421,15 @@ function buildSessionListViewData(
     });
 
     // Sort by latest update so locally displayed order matches paged server order.
-    activeSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-    inactiveSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+    activeSessions.sort((a, b) => getSessionConversationAt(b) - getSessionConversationAt(a));
+    inactiveSessions.sort((a, b) => getSessionConversationAt(b) - getSessionConversationAt(a));
 
     // Build unified list view data
     const listData: SessionListViewItem[] = [];
 
     // Add active sessions as a single item at the top (if any)
     if (activeSessions.length > 0) {
-        listData.push({ type: 'active-sessions', sessions: activeSessions.map(buildSessionRowData) });
+        listData.push({ type: 'active-sessions', sessions: activeSessions.map((session) => buildSessionRowData(session, machines)) });
     }
 
     // Group inactive sessions by date
@@ -328,7 +441,7 @@ function buildSessionListViewData(
     let currentDateString: string | null = null;
 
     for (const session of inactiveSessions) {
-        const sessionDate = new Date(session.createdAt);
+        const sessionDate = new Date(getSessionConversationAt(session));
         const dateString = sessionDate.toDateString();
 
         if (currentDateString !== dateString) {
@@ -350,7 +463,7 @@ function buildSessionListViewData(
 
                 listData.push({ type: 'header', title: headerTitle });
                 currentDateGroup.forEach(sess => {
-                    listData.push({ type: 'session', session: buildSessionRowData(sess) });
+                    listData.push({ type: 'session', session: buildSessionRowData(sess, machines) });
                 });
             }
 
@@ -380,7 +493,7 @@ function buildSessionListViewData(
 
         listData.push({ type: 'header', title: headerTitle });
         currentDateGroup.forEach(sess => {
-            listData.push({ type: 'session', session: buildSessionRowData(sess) });
+            listData.push({ type: 'session', session: buildSessionRowData(sess, machines) });
         });
     }
 
@@ -498,10 +611,16 @@ export const storage = create<StorageState>()((set, get) => {
                     (session.permissionMode && session.permissionMode !== 'default' ? session.permissionMode : undefined) ||
                     defaultPermissionMode;
 
-                // Restore model mode / effort level from MMKV on first load — server
-                // does not sync these, and they used to reset on every app restart (#1028).
+                // Restore model mode / effort level from MMKV on first load. If the
+                // host reports a current model, treat that as authoritative so stale
+                // local selections do not hide the model configured on the machine.
                 const existingModelMode = state.sessions[session.id]?.modelMode;
-                const resolvedModelMode = existingModelMode ?? savedModelModes[session.id] ?? session.modelMode ?? null;
+                const existingHostModelCode = state.sessions[session.id]?.metadata?.currentModelCode;
+                const hostModelCode = session.metadata?.currentModelCode;
+                const hostModelChanged = !!hostModelCode && hostModelCode !== existingHostModelCode;
+                const resolvedModelMode = hostModelChanged
+                    ? null
+                    : existingModelMode ?? (hostModelCode ? null : savedModelModes[session.id]) ?? session.modelMode ?? null;
                 const existingEffortLevel = state.sessions[session.id]?.effortLevel;
                 const resolvedEffortLevel = existingEffortLevel ?? savedEffortLevels[session.id] ?? session.effortLevel ?? null;
 
@@ -536,9 +655,10 @@ export const storage = create<StorageState>()((set, get) => {
                 }
             });
 
-            // Sort both arrays by latest update to match server pagination order.
-            activeSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-            inactiveSessions.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+            // Sort both arrays by latest conversation time. Heartbeats, focus,
+            // metadata refreshes, and entering a session must not move it.
+            activeSessions.sort((a, b) => getSessionConversationAt(b) - getSessionConversationAt(a));
+            inactiveSessions.sort((a, b) => getSessionConversationAt(b) - getSessionConversationAt(a));
 
             // Build flat list data for FlashList
             const listData: SessionListItem[] = [];
@@ -615,7 +735,7 @@ export const storage = create<StorageState>()((set, get) => {
                     });
 
                     const messagesArray = Object.values(mergedMessagesMap)
-                        .sort((a, b) => b.createdAt - a.createdAt);
+                        .sort(compareMessagesNewestFirst);
 
                     updatedSessionMessages[session.id] = {
                         messages: messagesArray,
@@ -636,7 +756,8 @@ export const storage = create<StorageState>()((set, get) => {
 
             // Build new unified list view data
             const sessionListViewData = buildSessionListViewData(
-                mergedSessions
+                mergedSessions,
+                state.machines
             );
 
             // Update project manager with current sessions and machines
@@ -714,6 +835,10 @@ export const storage = create<StorageState>()((set, get) => {
 
                 // Messages are already normalized, no need to process them again
                 const normalizedMessages = messages;
+                const latestIncomingMessageAt = normalizedMessages.reduce(
+                    (latest, message) => Math.max(latest, getMessageConversationAt(message)),
+                    0
+                );
 
                 // Run reducer with agentState
                 const reducerResult = reducer(existingSession.reducerState, normalizedMessages, agentState);
@@ -733,19 +858,22 @@ export const storage = create<StorageState>()((set, get) => {
 
                 // Convert to array and sort by createdAt
                 const messagesArray = Object.values(mergedMessagesMap)
-                    .sort((a, b) => b.createdAt - a.createdAt);
+                    .sort(compareMessagesNewestFirst);
 
                 // Update session with todos and latestUsage
                 // IMPORTANT: We extract latestUsage from the mutable reducerState and copy it to the Session object
                 // This ensures latestUsage is available immediately on load, even before messages are fully loaded
                 let updatedSessions = state.sessions;
-                const needsUpdate = (reducerResult.todos !== undefined || existingSession.reducerState.latestUsage || shouldEnterPlanMode) && session;
+                const currentLastMessageAt = session?.lastMessageAt ?? 0;
+                const shouldUpdateLastMessageAt = !!session && latestIncomingMessageAt > currentLastMessageAt;
+                const needsUpdate = (reducerResult.todos !== undefined || existingSession.reducerState.latestUsage || shouldEnterPlanMode || shouldUpdateLastMessageAt) && session;
 
                 if (needsUpdate) {
                     updatedSessions = {
                         ...state.sessions,
                         [sessionId]: {
                             ...session,
+                            ...(shouldUpdateLastMessageAt && { lastMessageAt: latestIncomingMessageAt }),
                             ...(reducerResult.todos !== undefined && { todos: reducerResult.todos }),
                             // Copy latestUsage from reducerState to make it immediately available
                             latestUsage: existingSession.reducerState.latestUsage ? {
@@ -769,7 +897,8 @@ export const storage = create<StorageState>()((set, get) => {
                             reducerState: existingSession.reducerState, // Explicitly include the mutated reducer state
                             isLoaded: true
                         }
-                    }
+                    },
+                    ...(needsUpdate && { sessionListViewData: buildSessionListViewData(updatedSessions, state.machines) })
                 };
             });
 
@@ -813,7 +942,7 @@ export const storage = create<StorageState>()((set, get) => {
                     });
 
                     messages = Object.values(messagesMap)
-                        .sort((a, b) => b.createdAt - a.createdAt);
+                        .sort(compareMessagesNewestFirst);
                 }
 
                 // Extract latestUsage from reducerState if available and update session
@@ -855,6 +984,13 @@ export const storage = create<StorageState>()((set, get) => {
             }
 
             return result;
+        }),
+        resetSessionMessages: (sessionId: string) => set((state) => {
+            const { [sessionId]: _removed, ...remainingSessionMessages } = state.sessionMessages;
+            return {
+                ...state,
+                sessionMessages: remainingSessionMessages,
+            };
         }),
         applySettingsLocal: (settings: Partial<Settings>) => set((state) => {
             saveSettings(applySettings(state.settings, settings), state.settingsVersion ?? 0);
@@ -1019,7 +1155,7 @@ export const storage = create<StorageState>()((set, get) => {
             return {
                 ...state,
                 sessions: updatedSessions,
-                sessionListViewData: buildSessionListViewData(updatedSessions)
+                sessionListViewData: buildSessionListViewData(updatedSessions, state.machines)
             };
         }),
         updateSessionPermissionMode: (sessionId: string, mode: string) => set((state) => {
@@ -1140,7 +1276,8 @@ export const storage = create<StorageState>()((set, get) => {
 
             // Rebuild sessionListViewData to reflect machine changes
             const sessionListViewData = buildSessionListViewData(
-                state.sessions
+                state.sessions,
+                mergedMachines
             );
 
             return {
@@ -1157,7 +1294,7 @@ export const storage = create<StorageState>()((set, get) => {
             return {
                 ...state,
                 machines: remaining,
-                sessionListViewData: buildSessionListViewData(state.sessions)
+                sessionListViewData: buildSessionListViewData(state.sessions, remaining)
             };
         }),
         // Artifact methods
@@ -1234,7 +1371,7 @@ export const storage = create<StorageState>()((set, get) => {
             saveSessionEffortLevels(effortLevels);
             
             // Rebuild sessionListViewData without the deleted session
-            const sessionListViewData = buildSessionListViewData(remainingSessions);
+            const sessionListViewData = buildSessionListViewData(remainingSessions, state.machines);
             
             return {
                 ...state,

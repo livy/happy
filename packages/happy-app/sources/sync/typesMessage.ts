@@ -35,6 +35,7 @@ export type UserTextMessage = {
 export type ModeSwitchMessage = {
     kind: 'agent-event';
     id: string;
+    localId: string | null;
     createdAt: number;
     event: AgentEvent;
     meta?: MessageMeta;

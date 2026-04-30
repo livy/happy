@@ -358,6 +358,8 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const isDisconnected = !sessionStatus.isConnected;
     const isInactiveArchivedSession = isArchivedSession && isDisconnected;
     const resumeCommandBlock = getResumeCommandBlock(session);
+    const canSendMessage = sessionStatus.state === 'waiting';
+    const canAbortSession = sessionStatus.state === 'thinking' || sessionStatus.state === 'permission_required';
 
     // Use draft hook for auto-saving message drafts
     const { clearDraft } = useDraft(sessionId, message, setMessage);
@@ -450,8 +452,8 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     // Trigger session visibility and initialize git status sync
     React.useLayoutEffect(() => {
 
-        // Trigger session sync
-        sync.onSessionVisible(sessionId);
+        // Trigger session context, message, and host state sync.
+        sync.refreshSessionContext(sessionId);
 
 
         // Initialize git status sync for this session
@@ -499,9 +501,9 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 dotColor: sessionStatus.statusDotColor,
                 isPulsing: sessionStatus.isPulsing
             }}
-            blockSend={false}
+            blockSend={!canSendMessage}
             onSend={() => {
-                if (message.trim()) {
+                if (canSendMessage && message.trim()) {
                     setMessage('');
                     clearDraft();
                     sync.sendMessage(sessionId, message, { source: 'chat' });
@@ -509,8 +511,8 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
             }}
             onMicPress={isDisconnected ? undefined : micButtonState.onMicPress}
             isMicActive={isDisconnected ? false : micButtonState.isMicActive}
-            onAbort={isDisconnected ? undefined : () => sessionAbort(sessionId)}
-            showAbortButton={sessionStatus.state === 'thinking' || sessionStatus.state === 'waiting'}
+            onAbort={canAbortSession ? () => sessionAbort(sessionId) : undefined}
+            showAbortButton={canAbortSession}
             onFileViewerPress={experiments ? () => router.push(`/session/${sessionId}/files`) : undefined}
             autocompletePrefixes={['@', '/']}
             autocompleteSuggestions={(query) => getSuggestions(sessionId, query)}

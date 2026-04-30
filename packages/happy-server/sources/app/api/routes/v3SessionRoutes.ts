@@ -13,7 +13,8 @@ const getMessagesQuerySchema = z.object({
 const sendMessagesBodySchema = z.object({
     messages: z.array(z.object({
         content: z.string(),
-        localId: z.string().min(1)
+        localId: z.string().min(1),
+        createdAt: z.number().int().positive().optional()
     })).min(1).max(100)
 });
 
@@ -124,7 +125,7 @@ export function v3SessionRoutes(app: Fastify) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
-        const firstMessageByLocalId = new Map<string, { localId: string; content: string }>();
+        const firstMessageByLocalId = new Map<string, { localId: string; content: string; createdAt?: number }>();
         for (const message of messages) {
             if (!firstMessageByLocalId.has(message.localId)) {
                 firstMessageByLocalId.set(message.localId, message);
@@ -171,7 +172,11 @@ export function v3SessionRoutes(app: Fastify) {
                             t: 'encrypted',
                             c: message.content
                         },
-                        localId: message.localId
+                        localId: message.localId,
+                        ...(message.createdAt ? {
+                            createdAt: new Date(message.createdAt),
+                            updatedAt: new Date(message.createdAt),
+                        } : {})
                     },
                     select: {
                         id: true,
@@ -185,7 +190,38 @@ export function v3SessionRoutes(app: Fastify) {
                 createdMessages.push(createdMessage);
             }
 
-            const responseMessages = [...existing, ...createdMessages].sort((a, b) => a.seq - b.seq);
+            const updatedExisting: Omit<SelectedMessage, 'content'>[] = [];
+            for (const message of existing) {
+                const replacement = uniqueMessages.find((item) => item.localId === message.localId);
+                if (replacement) {
+                    const updated = await tx.sessionMessage.update({
+                        where: { id: message.id },
+                        data: {
+                            content: {
+                                t: 'encrypted',
+                                c: replacement.content
+                            },
+                            ...(replacement.createdAt ? {
+                                createdAt: new Date(replacement.createdAt),
+                                updatedAt: new Date(replacement.createdAt),
+                            } : {})
+                        },
+                        select: {
+                            id: true,
+                            seq: true,
+                            content: true,
+                            localId: true,
+                            createdAt: true,
+                            updatedAt: true
+                        }
+                    });
+                    updatedExisting.push(updated);
+                } else {
+                    updatedExisting.push(message);
+                }
+            }
+
+            const responseMessages = [...updatedExisting, ...createdMessages].sort((a, b) => a.seq - b.seq);
 
             return {
                 responseMessages,

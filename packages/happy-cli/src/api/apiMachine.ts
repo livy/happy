@@ -14,7 +14,12 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
-import type { SyncLocalSessionsOptions, SyncLocalSessionsResult } from '@/daemon/syncLocalSessions';
+import type {
+    SyncLocalSessionMessagesOptions,
+    SyncLocalSessionMessagesResult,
+    SyncLocalSessionsOptions,
+    SyncLocalSessionsResult,
+} from '@/daemon/syncLocalSessions';
 
 interface ServerToDaemonEvents {
     update: (data: Update) => void;
@@ -79,6 +84,7 @@ type MachineRpcHandlers = {
     stopSession: (sessionId: string) => boolean;
     requestShutdown: () => void;
     syncLocalSessions?: (options: SyncLocalSessionsOptions) => Promise<SyncLocalSessionsResult>;
+    syncLocalSessionMessages?: (options: SyncLocalSessionMessagesOptions) => Promise<SyncLocalSessionMessagesResult>;
 }
 
 export class ApiMachineClient {
@@ -110,7 +116,8 @@ export class ApiMachineClient {
         resumeSession,
         stopSession,
         requestShutdown,
-        syncLocalSessions
+        syncLocalSessions,
+        syncLocalSessionMessages
     }: MachineRpcHandlers) {
         this.resumeSessionHandler = resumeSession ?? null;
 
@@ -143,11 +150,25 @@ export class ApiMachineClient {
 
         if (syncLocalSessions) {
             this.rpcHandlerManager.registerHandler('sync-local-sessions', async (params: any) => {
-                const flavor = params?.flavor === 'claude' || params?.flavor === 'all' ? params.flavor : 'all';
+                const flavor = params?.flavor === 'claude' || params?.flavor === 'codex' || params?.flavor === 'all' ? params.flavor : 'all';
                 return syncLocalSessions({
                     limit: typeof params?.limit === 'number' ? params.limit : undefined,
                     cursor: typeof params?.cursor === 'string' ? params.cursor : null,
                     flavor,
+                });
+            });
+        }
+
+        if (syncLocalSessionMessages) {
+            this.rpcHandlerManager.registerHandler('sync-local-session-messages', async (params: any) => {
+                if (typeof params?.nativeSessionId !== 'string' || params.nativeSessionId.length === 0) {
+                    throw new Error('nativeSessionId is required');
+                }
+                return syncLocalSessionMessages({
+                    nativeSessionId: params.nativeSessionId,
+                    limit: typeof params?.limit === 'number' ? params.limit : undefined,
+                    beforeCreatedAt: typeof params?.beforeCreatedAt === 'number' ? params.beforeCreatedAt : undefined,
+                    flavor: params?.flavor === 'claude' || params?.flavor === 'codex' || params?.flavor === 'all' ? params.flavor : undefined,
                 });
             });
         }

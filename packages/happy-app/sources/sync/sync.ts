@@ -67,6 +67,7 @@ type ApiSessionListItem = {
     dataEncryptionKey: string | null;
     active: boolean;
     activeAt: number;
+    lastMessageAt?: number | null;
     createdAt: number;
     updatedAt: number;
     lastMessage?: ApiMessage | null;
@@ -88,9 +89,20 @@ type MachineSyncLocalSessionsResponse = {
         tag: string;
         nativeSessionId: string;
         path: string;
+        title: string | null;
         updatedAt: number;
-        flavor: 'claude';
+        flavor: 'claude' | 'codex';
     }>;
+};
+
+type MachineSyncLocalSessionMessagesResponse = {
+    found: boolean;
+    records: Array<{
+        localId: string;
+        createdAt: number;
+        record: RawRecord;
+    }>;
+    hasMore: boolean;
 };
 
 type V3PostSessionMessagesResponse = {
@@ -117,6 +129,7 @@ class Sync {
     private static readonly BACKGROUND_SEND_TIMEOUT_MS = 30_000;
     private static readonly SESSIONS_PAGE_LIMIT = 50;
     private static readonly AUTO_LOCAL_SESSION_SYNC_LIMIT = 50;
+    private static readonly LOCAL_SESSION_MESSAGE_PAGE_LIMIT = 5;
     encryption!: Encryption;
     serverID!: string;
     anonID!: string;
@@ -138,6 +151,9 @@ class Sync {
     private sessionsReplaceMachineIds = new Set<string>();
     private autoLocalSessionSyncAttempted = new Set<string>();
     private autoLocalSessionSyncInFlight = new Set<string>();
+    private localSessionMessageSyncInFlight = new Set<string>();
+    private localSessionOlderMessageSyncInFlight = new Set<string>();
+    private localSessionMessageHasMore = new Map<string, boolean>();
     private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
     private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
     private settingsSync: InvalidateSync;
@@ -295,6 +311,213 @@ class Sync {
         const session = storage.getState().sessions[sessionId];
         if (session) {
             voiceHooks.onSessionFocus(sessionId, session.metadata || undefined);
+        }
+    }
+
+    refreshSessionContext = (sessionId: string) => {
+        this.onSessionVisible(sessionId);
+        this.sessionsSync.invalidate();
+        this.machinesSync.invalidate();
+        void this.syncLocalSessionMessagesForVisibleSession(sessionId);
+    }
+
+    private syncLocalSessionMessagesForVisibleSession = async (sessionId: string) => {
+        if (this.localSessionMessageSyncInFlight.has(sessionId)) {
+            return;
+        }
+
+        const context = this.getLocalSessionMessageContext(sessionId);
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        if (!context || (sessionMessages?.messages.length ?? 0) > 0) {
+            return;
+        }
+
+        this.localSessionMessageSyncInFlight.add(sessionId);
+        try {
+            const result = await apiSocket.machineRPC<MachineSyncLocalSessionMessagesResponse, {
+                nativeSessionId: string;
+                limit: number;
+                flavor: 'claude' | 'codex';
+                beforeCreatedAt?: number | null;
+            }>(
+                context.machineId,
+                'sync-local-session-messages',
+                {
+                    nativeSessionId: context.nativeSessionId,
+                    limit: Sync.LOCAL_SESSION_MESSAGE_PAGE_LIMIT,
+                    flavor: context.flavor,
+                    beforeCreatedAt: null,
+                }
+            );
+            this.localSessionMessageHasMore.set(sessionId, result.hasMore);
+
+            if (!result.found || result.records.length === 0) {
+                return;
+            }
+
+            await this.uploadLocalSessionMessageRecords(sessionId, result.records);
+            this.sessionLastSeq.set(sessionId, 0);
+            this.getMessagesSync(sessionId).invalidate();
+        } catch (error) {
+            log.log(`💬 Local session message sync skipped for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            this.localSessionMessageSyncInFlight.delete(sessionId);
+        }
+    }
+
+    public loadOlderLocalSessionMessages = async (sessionId: string) => {
+        if (this.localSessionMessageSyncInFlight.has(sessionId) || this.localSessionOlderMessageSyncInFlight.has(sessionId)) {
+            return;
+        }
+        if (this.localSessionMessageHasMore.get(sessionId) === false) {
+            return;
+        }
+
+        const context = this.getLocalSessionMessageContext(sessionId);
+        if (!context) {
+            return;
+        }
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        if (!sessionMessages || sessionMessages.messages.length === 0) {
+            return;
+        }
+
+        const beforeCreatedAt = this.getOldestLocalSessionMessageCreatedAt(sessionMessages.messages);
+        if (beforeCreatedAt === null) {
+            return;
+        }
+
+        this.localSessionOlderMessageSyncInFlight.add(sessionId);
+        try {
+            const result = await apiSocket.machineRPC<MachineSyncLocalSessionMessagesResponse, {
+                nativeSessionId: string;
+                limit: number;
+                flavor: 'claude' | 'codex';
+                beforeCreatedAt: number;
+            }>(
+                context.machineId,
+                'sync-local-session-messages',
+                {
+                    nativeSessionId: context.nativeSessionId,
+                    limit: Sync.LOCAL_SESSION_MESSAGE_PAGE_LIMIT,
+                    flavor: context.flavor,
+                    beforeCreatedAt,
+                }
+            );
+            this.localSessionMessageHasMore.set(sessionId, result.hasMore);
+
+            if (!result.found || result.records.length === 0) {
+                return;
+            }
+
+            await this.uploadLocalSessionMessageRecords(sessionId, result.records);
+            storage.getState().resetSessionMessages(sessionId);
+            this.sessionLastSeq.set(sessionId, 0);
+            this.getMessagesSync(sessionId).invalidate();
+        } catch (error) {
+            log.log(`💬 Older local session message sync skipped for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            this.localSessionOlderMessageSyncInFlight.delete(sessionId);
+        }
+    }
+
+    private getLocalSessionMessageContext(sessionId: string): {
+        machineId: string;
+        nativeSessionId: string;
+        flavor: 'claude' | 'codex';
+    } | null {
+        const session = storage.getState().sessions[sessionId];
+        const nativeSessionId = session?.metadata?.claudeSessionId ?? session?.metadata?.codexThreadId;
+        const flavor = session?.metadata?.codexThreadId ? 'codex' : 'claude';
+        const machineId = session?.metadata?.machineId;
+        if (!session || !nativeSessionId || !machineId) {
+            return null;
+        }
+        return { machineId, nativeSessionId, flavor };
+    }
+
+    private getImportedMessageCreatedAt(message: { createdAt: number; localId?: string | null }): number {
+        if (typeof message.localId === 'string') {
+            const match = message.localId.match(/^local-(?:codex|claude):[^:]+:(\d{10,}):/);
+            if (match) {
+                const timestamp = Number(match[1]);
+                if (Number.isFinite(timestamp)) {
+                    return timestamp;
+                }
+            }
+        }
+        return message.createdAt;
+    }
+
+    private getImportedMessageLocalOrder(message: { localId?: string | null }): number {
+        if (typeof message.localId === 'string') {
+            const match = message.localId.match(/^local-(?:codex|claude):[^:]+:\d{10,}:(\d+)/);
+            if (match) {
+                const order = Number(match[1]);
+                if (Number.isFinite(order)) {
+                    return order;
+                }
+            }
+        }
+        return 0;
+    }
+
+    private compareImportedMessagesChronologically(
+        a: { createdAt: number; localId?: string | null; id?: string },
+        b: { createdAt: number; localId?: string | null; id?: string },
+    ): number {
+        const aTime = this.getImportedMessageCreatedAt(a);
+        const bTime = this.getImportedMessageCreatedAt(b);
+        if (aTime !== bTime) {
+            return aTime - bTime;
+        }
+
+        const aOrder = this.getImportedMessageLocalOrder(a);
+        const bOrder = this.getImportedMessageLocalOrder(b);
+        if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+        }
+
+        return (a.localId ?? a.id ?? '').localeCompare(b.localId ?? b.id ?? '');
+    }
+
+    private getOldestLocalSessionMessageCreatedAt(messages: Message[]): number | null {
+        if (messages.length === 0) {
+            return null;
+        }
+        return messages.reduce((oldest, message) => Math.min(oldest, this.getImportedMessageCreatedAt(message)), Number.POSITIVE_INFINITY);
+    }
+
+    private uploadLocalSessionMessageRecords = async (
+        sessionId: string,
+        records: MachineSyncLocalSessionMessagesResponse['records'],
+    ) => {
+        const encryption = this.encryption.getSessionEncryption(sessionId);
+        if (!encryption) {
+            throw new Error(`Session encryption not ready for ${sessionId}`);
+        }
+
+        const orderedRecords = [...records].sort((a, b) => this.compareImportedMessagesChronologically(a, b));
+        const messages = await Promise.all(orderedRecords.map(async (item) => ({
+            localId: item.localId,
+            createdAt: item.createdAt,
+            content: await encryption.encryptRawRecord(item.record),
+        })));
+
+        for (let i = 0; i < messages.length; i += 100) {
+            const batch = messages.slice(i, i + 100);
+            const response = await apiSocket.request(`/v3/sessions/${sessionId}/messages`, {
+                method: 'POST',
+                body: JSON.stringify({ messages: batch }),
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to sync local session messages for ${sessionId}: ${response.status}`);
+            }
         }
     }
 
@@ -512,6 +735,13 @@ class Sync {
         const session = storage.getState().sessions[sessionId];
         if (!session) {
             console.error(`Session ${sessionId} not found in storage`);
+            return;
+        }
+
+        const hasPendingPermission = !!(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0);
+        const canSend = session.presence === 'online' && !session.thinking && !hasPendingPermission;
+        if (!canSend) {
+            log.log(`Blocked send for session ${sessionId}: presence=${session.presence}, thinking=${session.thinking}, pendingPermission=${hasPendingPermission}`);
             return;
         }
 
@@ -1316,7 +1546,7 @@ class Sync {
             const result = await apiSocket.machineRPC<MachineSyncLocalSessionsResponse, {
                 limit: number;
                 cursor: string | null;
-                flavor: 'claude' | 'all';
+                flavor: 'claude' | 'codex' | 'all';
             }>(
                 machineId,
                 'sync-local-sessions',
@@ -1788,6 +2018,8 @@ class Sync {
             let afterSeq = this.sessionLastSeq.get(sessionId) ?? 0;
             let hasMore = true;
             let totalNormalized = 0;
+            const isLocalImportedSession = this.getLocalSessionMessageContext(sessionId) !== null;
+            const localImportedMessages: NormalizedMessage[] = [];
 
             while (hasMore) {
                 const response = await apiSocket.request(`/v3/sessions/${sessionId}/messages?after_seq=${afterSeq}&limit=100`);
@@ -1819,7 +2051,11 @@ class Sync {
 
                 if (normalizedMessages.length > 0) {
                     totalNormalized += normalizedMessages.length;
-                    this.enqueueMessages(sessionId, normalizedMessages);
+                    if (isLocalImportedSession) {
+                        localImportedMessages.push(...normalizedMessages);
+                    } else {
+                        this.enqueueMessages(sessionId, normalizedMessages);
+                    }
                 }
 
                 this.sessionLastSeq.set(sessionId, maxSeq);
@@ -1829,6 +2065,11 @@ class Sync {
                     break;
                 }
                 afterSeq = maxSeq;
+            }
+
+            if (localImportedMessages.length > 0) {
+                localImportedMessages.sort((a, b) => this.compareImportedMessagesChronologically(a, b));
+                this.enqueueMessages(sessionId, localImportedMessages);
             }
 
             storage.getState().applyMessagesLoaded(sessionId);
@@ -1944,6 +2185,7 @@ class Sync {
                         this.applySessions([{
                             ...session,
                             updatedAt: updateData.createdAt,
+                            lastMessageAt: updateData.body.message.createdAt,
                             seq: updateData.seq,
                             // Update thinking state based on task lifecycle events
                             ...(isTaskComplete ? { thinking: false } : {}),

@@ -120,6 +120,7 @@ import { parseMessageAsEvent } from "./messageToEvent";
 type ReducerMessage = {
     id: string;
     realID: string | null;
+    localId: string | null;
     createdAt: number;
     role: 'user' | 'agent';
     text: string | null;
@@ -368,6 +369,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         state.messages.set(mid, {
             id: mid,
             realID: message.id,
+            localId: message.localId,
             role: 'agent',
             createdAt: message.createdAt,
             event: event,
@@ -449,6 +451,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     state.messages.set(mid, {
                         id: mid,
                         realID: null,
+                        localId: null,
                         role: 'agent',
                         createdAt: request.createdAt || Date.now(),
                         text: null,
@@ -611,6 +614,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     state.messages.set(mid, {
                         id: mid,
                         realID: null,
+                        localId: null,
                         role: 'agent',
                         createdAt: completed.createdAt || Date.now(),
                         text: null,
@@ -659,6 +663,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             state.messages.set(mid, {
                 id: mid,
                 realID: msg.id,
+                localId: msg.localId,
                 role: 'user',
                 createdAt: msg.createdAt,
                 text: msg.content.text,
@@ -696,6 +701,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     state.messages.set(mid, {
                         id: mid,
                         realID: msg.id,
+                        localId: msg.localId,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: isThinking ? `*${c.thinking}*` : c.text,
@@ -790,6 +796,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                         state.messages.set(mid, {
                             id: mid,
                             realID: msg.id,
+                            localId: msg.localId,
                             role: 'agent',
                             createdAt: msg.createdAt,
                             text: null,
@@ -902,6 +909,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             let userMsg: ReducerMessage = {
                 id: mid,
                 realID: msg.id,
+                localId: msg.localId,
                 role: 'user',
                 createdAt: msg.createdAt,
                 text: msg.content[0].prompt,
@@ -924,6 +932,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     let textMsg: ReducerMessage = {
                         id: mid,
                         realID: msg.id,
+                        localId: msg.localId,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: isThinking ? `*${c.thinking}*` : c.text,
@@ -968,6 +977,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                     let toolMsg: ReducerMessage = {
                         id: mid,
                         realID: msg.id,
+                        localId: msg.localId,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: null,
@@ -1085,6 +1095,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             state.messages.set(mid, {
                 id: mid,
                 realID: msg.id,
+                localId: msg.localId,
                 role: 'agent',
                 createdAt: msg.createdAt,
                 event: msg.content,
@@ -1160,7 +1171,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     if (reducerMsg.role === 'user' && reducerMsg.text !== null) {
         return {
             id: reducerMsg.id,
-            localId: null,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'user-text',
             text: reducerMsg.text,
@@ -1170,7 +1181,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
         return {
             id: reducerMsg.id,
-            localId: null,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'agent-text',
             text: reducerMsg.text,
@@ -1190,7 +1201,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
 
         return {
             id: reducerMsg.id,
-            localId: null,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'tool-call',
             tool: { ...reducerMsg.tool },
@@ -1200,6 +1211,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.event !== null) {
         return {
             id: reducerMsg.id,
+            localId: reducerMsg.localId,
             createdAt: reducerMsg.createdAt,
             kind: 'agent-event',
             event: reducerMsg.event,
