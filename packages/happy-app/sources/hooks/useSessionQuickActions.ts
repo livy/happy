@@ -4,7 +4,7 @@ import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { Modal } from '@/modal';
 import { machineResumeSession, sessionArchive, sessionKill } from '@/sync/ops';
 import { maybeCleanupWorktree } from '@/hooks/useWorktreeCleanup';
-import { storage, useLocalSetting, useMachine, useSetting } from '@/sync/storage';
+import { storage, useLocalSetting, useMachine } from '@/sync/storage';
 import { Machine, Session } from '@/sync/storageTypes';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -109,10 +109,9 @@ export function useSessionQuickActions(
     const machineId = session.metadata?.machineId ?? '';
     const machine = useMachine(machineId);
     const devModeEnabled = useLocalSetting('devModeEnabled');
-    const expResumeSession = useSetting('expResumeSession');
     const resumeAvailability = React.useMemo(
-        () => expResumeSession ? getResumeAvailability(session, machine, sessionStatus.isConnected) : { canResume: false, canShowResume: false, subtitle: '', message: '' },
-        [machine, session, sessionStatus.isConnected, expResumeSession],
+        () => getResumeAvailability(session, machine, sessionStatus.isConnected),
+        [machine, session, sessionStatus.isConnected],
     );
 
     const openDetails = React.useCallback(() => {
@@ -137,7 +136,7 @@ export function useSessionQuickActions(
         })();
     }, [onAfterCopySessionMetadata, session]);
 
-    const [resumingSession, performResume] = useHappyAction(async () => {
+    const resumeSessionAsync = React.useCallback(async (): Promise<string> => {
         if (!resumeAvailability.canResume) {
             throw new HappyError(resumeAvailability.message, false);
         }
@@ -149,6 +148,7 @@ export function useSessionQuickActions(
         const result = await machineResumeSession({
             machineId,
             sessionId: session.id,
+            metadata: session.metadata,
             model: session.modelMode ?? undefined,
             permissionMode: session.permissionMode ?? undefined,
         });
@@ -167,13 +167,26 @@ export function useSessionQuickActions(
                 }
 
                 navigateToSession(result.sessionId);
-                return;
+                return result.sessionId;
             }
             case 'requestToApproveDirectoryCreation':
                 throw new HappyError(t('sessionInfo.resumeSessionUnexpectedDirectoryPrompt'), false);
             case 'error':
                 throw new HappyError(result.errorMessage, false);
         }
+    }, [
+        machineId,
+        navigateToSession,
+        resumeAvailability.canResume,
+        resumeAvailability.message,
+        session.id,
+        session.metadata,
+        session.modelMode,
+        session.permissionMode,
+    ]);
+
+    const [resumingSession, performResume] = useHappyAction(async () => {
+        await resumeSessionAsync();
     });
 
     const [archivingSession, performArchive] = useHappyAction(async () => {
@@ -247,6 +260,7 @@ export function useSessionQuickActions(
         copySessionMetadataAndLogs,
         openDetails,
         resumeSession,
+        resumeSessionAsync,
         resumeSessionSubtitle: resumeAvailability.subtitle,
         resumingSession,
     };

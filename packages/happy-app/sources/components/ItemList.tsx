@@ -27,6 +27,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
+function sanitizeContainerChildren(children: React.ReactNode): React.ReactNode {
+    return React.Children.map(children, (child) => (
+        typeof child === 'string' || typeof child === 'number' ? null : child
+    ));
+}
+
 export const ItemList = React.memo<ItemListProps>((props) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -62,7 +68,7 @@ export const ItemList = React.memo<ItemListProps>((props) => {
             contentInsetAdjustmentBehavior={(isIOS && !isWeb) ? 'automatic' : undefined}
             {...scrollViewProps}
         >
-            {children}
+            {sanitizeContainerChildren(children)}
         </ScrollView>
     );
 });
@@ -95,7 +101,7 @@ export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewPro
             ]}
         >
             <View style={containerStyle}>
-                {children}
+                {sanitizeContainerChildren(children)}
             </View>
         </View>
     );

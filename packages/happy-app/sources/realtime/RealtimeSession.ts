@@ -1,4 +1,4 @@
-import type { VoiceSession } from './types';
+import type { VoiceProviderId, VoiceSession } from './types';
 import { fetchVoiceCredentials } from '@/sync/apiVoice';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
@@ -15,12 +15,23 @@ import {
 } from '@/sync/persistence';
 import { buildVoiceFirstMessage, buildVoiceSystemPrompt } from './voiceSystemPrompt';
 import { getVoiceUpsellVariant } from './voiceExperiment';
+import { DEFAULT_VOICE_PROVIDER_ID, getVoiceProvider, isVoiceProviderId } from './voiceProviders';
+import { realtimeClientTools } from './realtimeClientTools';
 
 let voiceSession: VoiceSession | null = null;
 let voiceSessionStarted: boolean = false;
 let currentSessionId: string | null = null;
 let currentVoiceConversationId: string | null = null;
 let currentVoiceSessionStartedAt: number | null = null;
+
+function getSelectedVoiceProviderId(): VoiceProviderId {
+    const configured = storage.getState().settings.voiceInputProvider;
+    return isVoiceProviderId(configured) ? configured : DEFAULT_VOICE_PROVIDER_ID;
+}
+
+function getSelectedVoiceSession(): VoiceSession | null {
+    return getVoiceProvider(getSelectedVoiceProviderId());
+}
 
 /**
  * Start a voice session. Returns the ElevenLabs conversation ID if started, null otherwise.
@@ -29,8 +40,9 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
     currentVoiceConversationId = null;
     currentVoiceSessionStartedAt = null;
 
-    if (!voiceSession) {
-        console.warn('No voice session registered');
+    const selectedVoiceSession = getSelectedVoiceSession();
+    if (!selectedVoiceSession) {
+        console.warn('No voice session registered for selected provider:', getSelectedVoiceProviderId());
         return null;
     }
 
@@ -47,12 +59,33 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
     }
 
     try {
+        if (selectedVoiceSession.mode === 'speech-recognition') {
+            currentSessionId = sessionId;
+            const conversationId = await selectedVoiceSession.startSession({
+                sessionId,
+                initialContext,
+                onFinalTranscript: async (text) => {
+                    const trimmed = text.trim();
+                    if (!trimmed) return;
+                    await realtimeClientTools.sendMessageToSession({
+                        sessionId,
+                        message: trimmed,
+                    });
+                },
+            });
+            currentVoiceConversationId = conversationId;
+            currentVoiceSessionStartedAt = Date.now();
+            voiceSessionStarted = true;
+            voiceSession = selectedVoiceSession;
+            return conversationId;
+        }
+
         // Bypass Happy server token — only when user has their own custom agent
         const { voiceBypassToken, voiceCustomAgentId } = storage.getState().settings;
         if (voiceBypassToken && voiceCustomAgentId) {
             console.log('[Voice] Bypassing token, custom agent ID:', voiceCustomAgentId);
             currentSessionId = sessionId;
-            const conversationId = await voiceSession.startSession({
+            const conversationId = await selectedVoiceSession.startSession({
                 sessionId,
                 initialContext,
                 agentId: voiceCustomAgentId,
@@ -60,6 +93,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             currentVoiceConversationId = conversationId;
             currentVoiceSessionStartedAt = Date.now();
             voiceSessionStarted = true;
+            voiceSession = selectedVoiceSession;
             return conversationId;
         }
 
@@ -128,7 +162,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             includePaidVoiceOnboarding: voiceUpsellVariant === 'voice-onboarding-and-upsell',
         });
 
-        const startedConversationId = await voiceSession.startSession({
+        const startedConversationId = await selectedVoiceSession.startSession({
             sessionId,
             initialContext,
             systemPrompt,
@@ -143,6 +177,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
         currentVoiceConversationId = response.conversationId ?? startedConversationId;
         currentVoiceSessionStartedAt = Date.now();
         voiceSessionStarted = true;
+        voiceSession = selectedVoiceSession;
         return currentVoiceConversationId;
     } catch (error) {
         console.error('Failed to start realtime session:', error);
@@ -171,13 +206,6 @@ export async function stopRealtimeSession() {
         currentVoiceSessionStartedAt = null;
         voiceSessionStarted = false;
     }
-}
-
-export function registerVoiceSession(session: VoiceSession) {
-    if (voiceSession) {
-        console.warn('Voice session already registered, replacing with new one');
-    }
-    voiceSession = session;
 }
 
 export function isVoiceSessionStarted(): boolean {

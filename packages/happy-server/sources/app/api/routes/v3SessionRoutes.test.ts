@@ -161,13 +161,31 @@ const {
         return selectFields(row as unknown as Record<string, unknown>, args?.select);
     });
 
+    const sessionMessageUpdate = vi.fn(async (args: any) => {
+        const row = state.messages.find((message) => message.id === args?.where?.id);
+        if (!row) {
+            throw new Error("Message not found");
+        }
+        if (args?.data?.content !== undefined) {
+            row.content = args.data.content;
+        }
+        if (args?.data?.createdAt instanceof Date) {
+            row.createdAt = args.data.createdAt;
+        }
+        if (args?.data?.updatedAt instanceof Date) {
+            row.updatedAt = args.data.updatedAt;
+        }
+        return selectFields(row as unknown as Record<string, unknown>, args?.select);
+    });
+
     const txClient = {
         session: {
             update: sessionUpdate
         },
         sessionMessage: {
             findMany: sessionMessageFindMany,
-            create: sessionMessageCreate
+            create: sessionMessageCreate,
+            update: sessionMessageUpdate
         },
         account: {
             update: accountUpdate
@@ -184,7 +202,8 @@ const {
         },
         sessionMessage: {
             findMany: sessionMessageFindMany,
-            create: sessionMessageCreate
+            create: sessionMessageCreate,
+            update: sessionMessageUpdate
         },
         $transaction: vi.fn(async (fn: any) => fn(txClient))
     };
@@ -411,7 +430,7 @@ describe("v3SessionRoutes", () => {
         expect(emitUpdateMock).toHaveBeenCalledTimes(3);
     });
 
-    it("deduplicates by localId and returns mixed existing/new messages sorted by seq", async () => {
+    it("updates existing localId content and returns mixed existing/new messages sorted by seq", async () => {
         seedSession({ id: "session-1", accountId: "user-1", seq: 1 });
         seedMessage({ sessionId: "session-1", seq: 1, localId: "existing", content: { t: "encrypted", c: "old" } });
 
@@ -433,6 +452,7 @@ describe("v3SessionRoutes", () => {
         expect(body.messages.map((message: any) => message.localId)).toEqual(["existing", "new-1"]);
         expect(body.messages.map((message: any) => message.seq)).toEqual([1, 2]);
         expect(state.messages).toHaveLength(2);
+        expect(state.messages.find((message) => message.localId === "existing")?.content).toEqual({ t: "encrypted", c: "ignored" });
         expect(emitUpdateMock).toHaveBeenCalledTimes(1);
     });
 

@@ -5,7 +5,7 @@
 
 import { apiSocket } from './apiSocket';
 import { sync } from './sync';
-import type { MachineMetadata } from './storageTypes';
+import type { MachineMetadata, Metadata } from './storageTypes';
 
 // Strict type definitions for all operations
 
@@ -48,6 +48,22 @@ interface SessionReadFileRequest {
 interface SessionReadFileResponse {
     success: boolean;
     content?: string; // base64 encoded
+    error?: string;
+}
+
+interface SessionReadFileChunkRequest {
+    path: string;
+    offset: number;
+    length: number;
+}
+
+export interface SessionReadFileChunkResponse {
+    success: boolean;
+    content?: string; // base64 encoded
+    offset?: number;
+    length?: number;
+    totalSize?: number;
+    done?: boolean;
     error?: string;
 }
 
@@ -145,6 +161,7 @@ export interface SpawnSessionOptions {
 export interface ResumeSessionOptions {
     machineId: string;
     sessionId: string;
+    metadata?: Metadata | null;
 }
 
 export interface MachineSyncLocalSessionsOptions {
@@ -166,6 +183,8 @@ export interface MachineSyncLocalSessionsResult {
         path: string;
         title: string | null;
         updatedAt: number;
+        active: boolean;
+        activeAt: number;
         flavor: 'claude' | 'codex';
     }>;
 }
@@ -220,13 +239,13 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
 }
 
 export async function machineResumeSession(options: ResumeSessionOptions & { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> {
-    const { machineId, sessionId, model, permissionMode } = options;
+    const { machineId, sessionId, model, permissionMode, metadata } = options;
 
     try {
-        const result = await apiSocket.machineRPC<SpawnSessionResult, { sessionId: string; model?: string; permissionMode?: string }>(
+        const result = await apiSocket.machineRPC<SpawnSessionResult, { sessionId: string; model?: string; permissionMode?: string; metadata?: Metadata | null }>(
             machineId,
             'resume-happy-session',
-            { sessionId, model, permissionMode },
+            { sessionId, model, permissionMode, metadata },
         );
         return result;
     } catch (error) {
@@ -473,6 +492,32 @@ export async function sessionReadFile(sessionId: string, path: string): Promise<
         const response = await apiSocket.sessionRPC<SessionReadFileResponse, SessionReadFileRequest>(
             sessionId,
             'readFile',
+            request
+        );
+        return response;
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+/**
+ * Read a file chunk from the session. Use this for downloads so large files do
+ * not have to fit into one encrypted Socket.IO ack payload.
+ */
+export async function sessionReadFileChunk(
+    sessionId: string,
+    path: string,
+    offset: number,
+    length: number,
+): Promise<SessionReadFileChunkResponse> {
+    try {
+        const request: SessionReadFileChunkRequest = { path, offset, length };
+        const response = await apiSocket.sessionRPC<SessionReadFileChunkResponse, SessionReadFileChunkRequest>(
+            sessionId,
+            'readFileChunk',
             request
         );
         return response;

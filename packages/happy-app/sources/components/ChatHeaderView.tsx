@@ -143,7 +143,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                         >
                             {title}
                         </Text>
-                        {subtitle && (
+                        {!!subtitle && (
                             <Text
                                 numberOfLines={1}
                                 ellipsizeMode="tail"
@@ -161,7 +161,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                         )}
                     </View>
 
-                    {avatarId && onAvatarPress && (
+                    {!!avatarId && onAvatarPress && (
                         <View collapsable={false} ref={avatarAnchorRef} style={styles.avatarButtonSlot}>
                             {avatarMenuSession ? (
                                 <SessionActionsNativeMenu

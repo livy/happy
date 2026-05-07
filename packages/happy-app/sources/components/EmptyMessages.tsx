@@ -89,6 +89,8 @@ export function EmptyMessages({ session }: EmptyMessagesProps) {
     const osIcon = getOSIcon(session.metadata?.os);
     const sessionStatus = useSessionStatus(session);
     const startedTime = formatRelativeTime(session.createdAt);
+    const host = session.metadata?.host || null;
+    const path = session.metadata?.path || null;
     
     return (
         <View style={styles.container}>
@@ -99,15 +101,15 @@ export function EmptyMessages({ session }: EmptyMessagesProps) {
                 style={styles.iconContainer}
             />
             
-            {session.metadata?.host && (
+            {!!host && (
                 <Text style={styles.hostText}>
-                    {session.metadata.host}
+                    {host}
                 </Text>
             )}
             
-            {session.metadata?.path && (
+            {!!path && (
                 <Text style={styles.pathText}>
-                    {formatPathRelativeToHome(session.metadata.path, session.metadata.homeDir)}
+                    {formatPathRelativeToHome(path, session.metadata?.homeDir)}
                 </Text>
             )}
             

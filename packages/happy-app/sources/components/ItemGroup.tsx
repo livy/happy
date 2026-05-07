@@ -16,6 +16,10 @@ interface ItemChildProps {
     [key: string]: any;
 }
 
+function sanitizeContainerChild(child: React.ReactNode): React.ReactNode {
+    return typeof child === 'string' || typeof child === 'number' ? null : child;
+}
+
 export interface ItemGroupProps {
     title?: string | React.ReactNode;
     footer?: string;
@@ -117,6 +121,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 {/* Content Container */}
                 <View style={[styles.contentContainer, containerStyle]}>
                     {React.Children.map(children, (child, index) => {
+                        child = sanitizeContainerChild(child);
                         if (React.isValidElement<ItemChildProps>(child)) {
                             // Don't add props to React.Fragment
                             if (child.type === React.Fragment) {

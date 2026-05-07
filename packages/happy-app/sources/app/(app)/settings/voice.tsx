@@ -18,6 +18,7 @@ import { sync } from '@/sync/sync';
 import { trackPaywallButtonClicked } from '@/track';
 import { getVoiceExperimentStatus, getVoiceUpsellVariantLabel } from '@/realtime/voiceExperiment';
 import { getVoiceLocalCounters, resetVoiceLocalCounters } from '@/sync/persistence';
+import type { VoiceProviderId } from '@/realtime/types';
 
 function formatVoiceTime(totalSeconds: number): string {
     const mins = Math.floor(totalSeconds / 60);
@@ -29,6 +30,8 @@ export default React.memo(function VoiceSettingsScreen() {
     const router = useRouter();
     const auth = useAuth();
     const [voiceAssistantLanguage] = useSettingMutable('voiceAssistantLanguage');
+    const [voiceInputProvider, setVoiceInputProvider] = useSettingMutable('voiceInputProvider');
+    const [voiceDashScopeApiKey, setVoiceDashScopeApiKey] = useSettingMutable('voiceDashScopeApiKey');
     const [voiceCustomAgentId, setVoiceCustomAgentId] = useSettingMutable('voiceCustomAgentId');
     const [voiceBypassToken, setVoiceBypassToken] = useSettingMutable('voiceBypassToken');
     const [voiceUpsellOverride, setVoiceUpsellOverride] = useLocalSettingMutable('voiceUpsellOverride');
@@ -73,6 +76,37 @@ export default React.memo(function VoiceSettingsScreen() {
             setVoiceBypassToken(trimmed !== null);
         }
     }, [voiceCustomAgentId, setVoiceCustomAgentId, setVoiceBypassToken]);
+
+    const handleVoiceInputProvider = React.useCallback(() => {
+        const selectProvider = (provider: VoiceProviderId) => {
+            setVoiceInputProvider(provider);
+        };
+
+        Modal.alert(
+            t('settingsVoice.providerTitle'),
+            t('settingsVoice.providerDescription'),
+            [
+                { text: t('settingsVoice.providerElevenLabs'), onPress: () => selectProvider('elevenlabs') },
+                { text: t('settingsVoice.providerDashScopeAsr'), onPress: () => selectProvider('dashscope-asr') },
+                { text: t('common.cancel'), style: 'cancel' },
+            ],
+        );
+    }, [setVoiceInputProvider]);
+
+    const handleDashScopeApiKey = React.useCallback(async () => {
+        const value = await Modal.prompt(
+            t('settingsVoice.dashScopeApiKey'),
+            t('settingsVoice.dashScopeApiKeyDescription'),
+            {
+                defaultValue: voiceDashScopeApiKey ?? '',
+                placeholder: t('settingsVoice.dashScopeApiKeyPlaceholder'),
+                inputType: 'secure-text',
+            }
+        );
+        if (value !== null) {
+            setVoiceDashScopeApiKey(value.trim() || null);
+        }
+    }, [voiceDashScopeApiKey, setVoiceDashScopeApiKey]);
 
     const handleVoiceExperimentOverride = React.useCallback(() => {
         Modal.alert(
@@ -133,6 +167,10 @@ export default React.memo(function VoiceSettingsScreen() {
         }
         return getVoiceUpsellVariantLabel(voiceUpsellOverride);
     }, [voiceUpsellOverride]);
+
+    const voiceProviderLabel = voiceInputProvider === 'dashscope-asr'
+        ? t('settingsVoice.providerDashScopeAsr')
+        : t('settingsVoice.providerElevenLabs');
 
     const developerCountersSubtitle = React.useMemo(() => {
         return [
@@ -231,6 +269,27 @@ export default React.memo(function VoiceSettingsScreen() {
                     detail={getLanguageDisplayName(currentLanguage)}
                     onPress={() => router.push('/settings/voice/language')}
                 />
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsVoice.providerTitle')}
+                footer={t('settingsVoice.providerDescription')}
+            >
+                <Item
+                    title={t('settingsVoice.provider')}
+                    subtitle={t('settingsVoice.providerSubtitle')}
+                    icon={<Ionicons name="mic-circle-outline" size={29} color="#34C759" />}
+                    detail={voiceProviderLabel}
+                    onPress={handleVoiceInputProvider}
+                />
+                {voiceInputProvider === 'dashscope-asr' && (
+                    <Item
+                        title={t('settingsVoice.dashScopeApiKey')}
+                        subtitle={voiceDashScopeApiKey ? t('settingsVoice.dashScopeApiKeyConfigured') : t('settingsVoice.dashScopeApiKeyNotSet')}
+                        icon={<Ionicons name="key-outline" size={29} color="#FF9500" />}
+                        onPress={handleDashScopeApiKey}
+                    />
+                )}
             </ItemGroup>
 
             {/* Bring Your Own Agent */}

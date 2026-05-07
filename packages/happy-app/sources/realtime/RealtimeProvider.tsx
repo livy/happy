@@ -1,6 +1,7 @@
 import React from 'react';
 import { ElevenLabsProvider } from '@elevenlabs/react-native';
 import { RealtimeVoiceSession } from './RealtimeVoiceSession';
+import { DashScopeAsrVoiceSession } from './DashScopeAsrVoiceSession';
 import { useVoiceSessionGeneration } from '@/sync/storage';
 
 export const RealtimeProvider = ({ children }: { children: React.ReactNode }) => {
@@ -14,6 +15,7 @@ export const RealtimeProvider = ({ children }: { children: React.ReactNode }) =>
             <ElevenLabsProvider key={generation}>
                 <RealtimeVoiceSession />
             </ElevenLabsProvider>
+            <DashScopeAsrVoiceSession />
             {children}
         </>
     );

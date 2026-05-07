@@ -286,19 +286,33 @@ export function sessionRoutes(app: Fastify) {
         });
         if (session) {
             log({ module: 'session-create', sessionId: session.id, userId, tag }, `Found existing session: ${session.id} for tag ${tag}`);
+            const shouldUpdateActivity =
+                active !== undefined
+                || activeAt !== undefined
+                || updatedAt !== undefined;
+            const resolvedSession = shouldUpdateActivity
+                ? await db.session.update({
+                    where: { id: session.id },
+                    data: {
+                        ...(active !== undefined ? { active } : {}),
+                        ...(activeAt !== undefined ? { lastActiveAt: new Date(activeAt) } : {}),
+                        ...(updatedAt !== undefined ? { updatedAt: new Date(updatedAt) } : {})
+                    }
+                })
+                : session;
             return reply.send({
                 session: {
-                    id: session.id,
-                    seq: session.seq,
-                    metadata: session.metadata,
-                    metadataVersion: session.metadataVersion,
-                    agentState: session.agentState,
-                    agentStateVersion: session.agentStateVersion,
-                    dataEncryptionKey: session.dataEncryptionKey ? Buffer.from(session.dataEncryptionKey).toString('base64') : null,
-                    active: session.active,
-                    activeAt: session.lastActiveAt.getTime(),
-                    createdAt: session.createdAt.getTime(),
-                    updatedAt: session.updatedAt.getTime(),
+                    id: resolvedSession.id,
+                    seq: resolvedSession.seq,
+                    metadata: resolvedSession.metadata,
+                    metadataVersion: resolvedSession.metadataVersion,
+                    agentState: resolvedSession.agentState,
+                    agentStateVersion: resolvedSession.agentStateVersion,
+                    dataEncryptionKey: resolvedSession.dataEncryptionKey ? Buffer.from(resolvedSession.dataEncryptionKey).toString('base64') : null,
+                    active: resolvedSession.active,
+                    activeAt: resolvedSession.lastActiveAt.getTime(),
+                    createdAt: resolvedSession.createdAt.getTime(),
+                    updatedAt: resolvedSession.updatedAt.getTime(),
                     lastMessage: null
                 }
             });

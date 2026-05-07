@@ -5,7 +5,7 @@ import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
 import { Typography } from '@/constants/Typography';
-import { storage, useSessions, useAllMachines, useMachine } from '@/sync/storage';
+import { useSessions, useAllMachines, useMachine } from '@/sync/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { Session } from '@/sync/storageTypes';
 import { machineStopDaemon, machineUpdateMetadata, machineDelete, machineSyncLocalSessions } from '@/sync/ops';
@@ -249,32 +249,7 @@ export default function MachineDetailScreen() {
             setLocalSessionsCursor(result.nextCursor);
             setLocalSessionsHasMore(result.hasMore);
             await sync.refreshSessionsForMachine(machineId);
-            const titleBySessionId = new Map(
-                result.sessions
-                    .filter((session) => !!session.title)
-                    .map((session) => [session.id, session.title!] as const)
-            );
-            if (titleBySessionId.size > 0) {
-                const patchedSessions = Object.values(storage.getState().sessions)
-                    .filter((session) => titleBySessionId.has(session.id) && session.metadata)
-                    .map((session) => {
-                        const title = titleBySessionId.get(session.id)!;
-                        return {
-                            ...session,
-                            metadata: {
-                                ...session.metadata!,
-                                name: title,
-                                summary: {
-                                    text: title,
-                                    updatedAt: session.metadata?.summary?.updatedAt ?? session.updatedAt,
-                                },
-                            },
-                        };
-                    });
-                if (patchedSessions.length > 0) {
-                    storage.getState().applySessions(patchedSessions);
-                }
-            }
+            sync.applyLocalSessionSyncResult(result);
             Modal.alert(
                 'Local Sessions Synced',
                 result.hasMore

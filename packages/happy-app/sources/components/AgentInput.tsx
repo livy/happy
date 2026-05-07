@@ -975,7 +975,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 )}
 
                 {/* Box 1: Context Information (Machine + Path) - Only show if either exists */}
-                {(props.machineName !== undefined || props.currentPath) && (
+                {(props.machineName !== undefined || !!props.currentPath) && (
                     <View style={{
                         backgroundColor: theme.colors.surfacePressed,
                         borderRadius: 12,
@@ -1019,7 +1019,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         )}
 
                         {/* Path chip */}
-                        {props.currentPath && props.onPathClick && (
+                        {!!props.currentPath && props.onPathClick && (
                             <Pressable
                                 onPress={() => {
                                     hapticsLight();

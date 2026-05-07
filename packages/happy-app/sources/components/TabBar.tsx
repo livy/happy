@@ -8,7 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/layout';
 import { useInboxHasContent } from '@/hooks/useInboxHasContent';
 
-export type TabType = 'inbox' | 'sessions' | 'settings';
+export type TabType = 'inbox' | 'sessions' | 'projects' | 'settings';
 
 interface TabBarProps {
     activeTab: TabType;
@@ -90,6 +90,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }
         return [
             { key: 'inbox', icon: require('@/assets/images/brutalist/Brutalism-27.png'), label: t('tabs.inbox') },
             { key: 'sessions', icon: require('@/assets/images/brutalist/Brutalism-15.png'), label: t('tabs.sessions') },
+            { key: 'projects', icon: require('@/assets/images/brutalist/Brutalism-10.png'), label: t('tabs.projects') },
             { key: 'settings', icon: require('@/assets/images/brutalist/Brutalism-9.png'), label: t('tabs.settings') },
         ];
     }, []);

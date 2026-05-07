@@ -25,6 +25,21 @@ const STORE_REVIEW_RETRY_DAYS = 7; // Allow store review again after a week
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const lock = new AsyncLock();
 
+async function requestNativeStoreReview(): Promise<boolean> {
+    if (__DEV__) {
+        console.log('Skipping store review in development builds');
+        return false;
+    }
+
+    try {
+        await StoreReview.requestReview();
+        return true;
+    } catch (error) {
+        console.log('Store review request was not available:', error);
+        return false;
+    }
+}
+
 export function requestReview() {
     if (Platform.OS === 'web') {
         return;
@@ -57,9 +72,10 @@ export function requestReview() {
                     }
                 }
 
-                await StoreReview.requestReview();
-                trackReviewStoreShown();
-                localStorage.set(LOCAL_KEYS.STORE_REVIEW_LAST_SHOWN, new Date().toISOString());
+                if (await requestNativeStoreReview()) {
+                    trackReviewStoreShown();
+                    localStorage.set(LOCAL_KEYS.STORE_REVIEW_LAST_SHOWN, new Date().toISOString());
+                }
                 return;
             }
 
@@ -110,11 +126,12 @@ export function requestReview() {
             }
 
             // Request the actual store review directly
-            await StoreReview.requestReview();
-            trackReviewStoreShown();
+            if (await requestNativeStoreReview()) {
+                trackReviewStoreShown();
 
-            // Mark when we last showed the store review
-            localStorage.set(LOCAL_KEYS.STORE_REVIEW_LAST_SHOWN, new Date().toISOString());
+                // Mark when we last showed the store review
+                localStorage.set(LOCAL_KEYS.STORE_REVIEW_LAST_SHOWN, new Date().toISOString());
+            }
 
         } catch (error) {
             console.error('Error requesting review:', error);

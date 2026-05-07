@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useConversation } from '@elevenlabs/react';
-import { registerVoiceSession } from './RealtimeSession';
+import { registerVoiceProvider } from './voiceProviders';
 import { storage } from '@/sync/storage';
 import { realtimeClientTools } from './realtimeClientTools';
 import { getElevenLabsCodeFromPreference } from '@/constants/Languages';
@@ -17,6 +17,9 @@ let agentIsSpeaking = false;
 
 // Global voice session implementation
 class RealtimeVoiceSessionImpl implements VoiceSession {
+    id = 'elevenlabs' as const;
+    label = 'ElevenLabs';
+    mode = 'conversation' as const;
 
     async startSession(config: VoiceSessionConfig): Promise<string | null> {
         console.log('[RealtimeVoiceSessionImpl] conversationInstance:', conversationInstance);
@@ -190,7 +193,7 @@ export const RealtimeVoiceSession: React.FC = () => {
         if (!hasRegistered.current) {
             try {
                 console.log('[RealtimeVoiceSession] Registering voice session');
-                registerVoiceSession(new RealtimeVoiceSessionImpl());
+                registerVoiceProvider(new RealtimeVoiceSessionImpl());
                 hasRegistered.current = true;
                 console.log('[RealtimeVoiceSession] Voice session registered successfully');
             } catch (error) {

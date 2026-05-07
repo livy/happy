@@ -36,6 +36,7 @@ export type SyncSocketListener = (state: SyncSocketState) => void;
 //
 
 class ApiSocket {
+    private static readonly RPC_ACK_TIMEOUT_MS = 70_000;
 
     // State
     private socket: Socket | null = null;
@@ -108,6 +109,31 @@ class ApiSocket {
         return () => this.statusListeners.delete(listener);
     };
 
+    getStatus(): 'disconnected' | 'connecting' | 'connected' | 'error' {
+        return this.currentStatus;
+    }
+
+    waitForConnected(timeoutMs = 20_000): Promise<void> {
+        if (this.currentStatus === 'connected' && this.socket?.connected) {
+            return Promise.resolve();
+        }
+
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                unsubscribe();
+                reject(new Error('Timed out waiting for socket connection'));
+            }, timeoutMs);
+
+            const unsubscribe = this.onStatusChange((status) => {
+                if (status === 'connected' && this.socket?.connected) {
+                    clearTimeout(timeout);
+                    unsubscribe();
+                    resolve();
+                }
+            });
+        });
+    }
+
     //
     // Message Handling
     //
@@ -130,7 +156,7 @@ class ApiSocket {
             throw new Error(`Session encryption not found for ${sessionId}`);
         }
         
-        const result = await this.socket!.emitWithAck('rpc-call', {
+        const result = await this.socket!.timeout(ApiSocket.RPC_ACK_TIMEOUT_MS).emitWithAck('rpc-call', {
             method: `${sessionId}:${method}`,
             params: await sessionEncryption.encryptRaw(params)
         });
@@ -138,7 +164,7 @@ class ApiSocket {
         if (result.ok) {
             return await sessionEncryption.decryptRaw(result.result) as R;
         }
-        throw new Error('RPC call failed');
+        throw new Error(result.error || 'RPC call failed');
     }
 
     /**
@@ -150,7 +176,7 @@ class ApiSocket {
             throw new Error(`Machine encryption not found for ${machineId}`);
         }
 
-        const result = await this.socket!.emitWithAck('rpc-call', {
+        const result = await this.socket!.timeout(ApiSocket.RPC_ACK_TIMEOUT_MS).emitWithAck('rpc-call', {
             method: `${machineId}:${method}`,
             params: await machineEncryption.encryptRaw(params)
         });

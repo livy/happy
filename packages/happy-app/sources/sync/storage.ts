@@ -44,23 +44,38 @@ function isArchivedSession(session: { metadata?: { lifecycleState?: string | nul
     return session.metadata?.lifecycleState === 'archived';
 }
 
+function isHappyCliPath(path: string | null | undefined): boolean {
+    if (!path) {
+        return false;
+    }
+    return path.split(/[\\/]+/).includes('happy-cli');
+}
+
+function shouldShowSessionInLists(session: { metadata?: { path?: string | null } | null }): boolean {
+    return !isHappyCliPath(session.metadata?.path);
+}
+
 function resolveSessionOnlineState(session: { active: boolean; activeAt: number; metadata?: { lifecycleState?: string | null } | null }): "online" | number {
+    if (session.active) {
+        return "online";
+    }
     if (isArchivedSession(session)) {
         return session.activeAt;
     }
-    // Session is online if the active flag is true
-    return session.active ? "online" : session.activeAt;
+    return session.activeAt;
 }
 
 /**
  * Checks if a session should be shown in the active sessions group
  */
 function isSessionActive(session: { active: boolean; activeAt: number; metadata?: { lifecycleState?: string | null } | null }): boolean {
+    if (session.active) {
+        return true;
+    }
     if (isArchivedSession(session)) {
         return false;
     }
-    // Use the active flag directly, no timeout checks
-    return session.active;
+    return false;
 }
 
 function getSessionConversationAt(session: Pick<Session, 'lastMessageAt' | 'createdAt' | 'updatedAt' | 'metadata'>): number {
@@ -413,6 +428,9 @@ function buildSessionListViewData(
     const inactiveSessions: Session[] = [];
 
     Object.values(sessions).forEach(session => {
+        if (!shouldShowSessionInLists(session)) {
+            return;
+        }
         if (isSessionActive(session)) {
             activeSessions.push(session);
         } else {
@@ -637,6 +655,9 @@ export const storage = create<StorageState>()((set, get) => {
             // Build active set from all sessions (including existing ones)
             const activeSet = new Set<string>();
             Object.values(mergedSessions).forEach(session => {
+                if (!shouldShowSessionInLists(session)) {
+                    return;
+                }
                 if (isSessionActive(session)) {
                     activeSet.add(session.id);
                 }
@@ -648,6 +669,9 @@ export const storage = create<StorageState>()((set, get) => {
 
             // Process all sessions from merged set
             Object.values(mergedSessions).forEach(session => {
+                if (!shouldShowSessionInLists(session)) {
+                    return;
+                }
                 if (activeSet.has(session.id)) {
                     activeSessions.push(session);
                 } else {

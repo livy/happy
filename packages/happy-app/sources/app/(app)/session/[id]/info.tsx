@@ -134,9 +134,17 @@ function SessionInfoContent({ session }: { session: Session }) {
         resumeSession,
         resumeSessionSubtitle,
     } = useSessionQuickActions(session);
+    const claudeSessionId = session.metadata?.claudeSessionId || null;
+    const codexThreadId = session.metadata?.codexThreadId || null;
+    const resumeCommand = getResumeCommand(session);
+    const cliVersion = session.metadata?.version || null;
+    const os = session.metadata?.os || null;
+    const hostPid = session.metadata?.hostPid;
+    const happyHomeDir = session.metadata?.happyHomeDir || null;
+    const machineId = session.metadata?.machineId || null;
     
     // Check if CLI version is outdated
-    const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
+    const isCliOutdated = !!cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
 
     const handleCopySessionId = useCallback(async () => {
         if (!session) return;
@@ -276,14 +284,14 @@ function SessionInfoContent({ session }: { session: Session }) {
                         icon={<Ionicons name="finger-print-outline" size={29} color="#007AFF" />}
                         onPress={handleCopySessionId}
                     />
-                    {session.metadata?.claudeSessionId && (
+                    {!!claudeSessionId && (
                         <Item
                             title={t('sessionInfo.claudeCodeSessionId')}
-                            subtitle={`${session.metadata.claudeSessionId.substring(0, 8)}...${session.metadata.claudeSessionId.substring(session.metadata.claudeSessionId.length - 8)}`}
+                            subtitle={`${claudeSessionId.substring(0, 8)}...${claudeSessionId.substring(claudeSessionId.length - 8)}`}
                             icon={<Ionicons name="code-outline" size={29} color="#9C27B0" />}
                             onPress={async () => {
                                 try {
-                                    await Clipboard.setStringAsync(session.metadata!.claudeSessionId!);
+                                    await Clipboard.setStringAsync(claudeSessionId);
                                     Modal.alert(t('common.success'), t('sessionInfo.claudeCodeSessionIdCopied'));
                                 } catch (error) {
                                     Modal.alert(t('common.error'), t('sessionInfo.failedToCopyClaudeCodeSessionId'));
@@ -291,14 +299,14 @@ function SessionInfoContent({ session }: { session: Session }) {
                             }}
                         />
                     )}
-                    {session.metadata?.codexThreadId && (
+                    {!!codexThreadId && (
                         <Item
                             title={t('sessionInfo.codexThreadId')}
-                            subtitle={`${session.metadata.codexThreadId.substring(0, 8)}...${session.metadata.codexThreadId.substring(session.metadata.codexThreadId.length - 8)}`}
+                            subtitle={`${codexThreadId.substring(0, 8)}...${codexThreadId.substring(codexThreadId.length - 8)}`}
                             icon={<Ionicons name="terminal-outline" size={29} color="#10A37F" />}
                             onPress={async () => {
                                 try {
-                                    await Clipboard.setStringAsync(session.metadata!.codexThreadId!);
+                                    await Clipboard.setStringAsync(codexThreadId);
                                     Modal.alert(t('common.success'), t('sessionInfo.codexThreadIdCopied'));
                                 } catch (error) {
                                     Modal.alert(t('common.error'), t('sessionInfo.failedToCopyCodexThreadId'));
@@ -308,12 +316,12 @@ function SessionInfoContent({ session }: { session: Session }) {
                     )}
                     {/* Resume command — shown for disconnected sessions with a backend session ID */}
                     {/* TODO: migrate to `happy resume <happy-session-id>` once it works without happy-agent auth */}
-                    {!sessionStatus.isConnected && getResumeCommand(session) && (
+                    {!sessionStatus.isConnected && !!resumeCommand && (
                         <CopyableItem
                             title="Resume Command"
-                            subtitle={getResumeCommand(session)!}
+                            subtitle={resumeCommand}
                             icon={<Ionicons name="play-circle-outline" size={29} color="#30D158" />}
-                            copyText={getResumeCommand(session)!}
+                            copyText={resumeCommand}
                         />
                     )}
                     <Item
@@ -344,12 +352,12 @@ function SessionInfoContent({ session }: { session: Session }) {
 
                 {/* Quick Actions */}
                 <ItemGroup title={t('sessionInfo.quickActions')}>
-                    {session.metadata?.machineId && (
+                    {!!machineId && (
                         <Item
                             title={t('sessionInfo.viewMachine')}
                             subtitle={t('sessionInfo.viewMachineSubtitle')}
                             icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
-                            onPress={() => router.push(`/machine/${session.metadata?.machineId}`)}
+                            onPress={() => router.push(`/machine/${machineId}`)}
                         />
                     )}
                     {canShowResume && (
@@ -389,19 +397,19 @@ function SessionInfoContent({ session }: { session: Session }) {
                             icon={<Ionicons name="folder-outline" size={29} color="#5856D6" />}
                             showChevron={false}
                         />
-                        {session.metadata.version && (
+                        {!!cliVersion && (
                             <Item
                                 title={t('sessionInfo.cliVersion')}
-                                subtitle={session.metadata.version}
+                                subtitle={cliVersion}
                                 detail={isCliOutdated ? '⚠️' : undefined}
                                 icon={<Ionicons name="git-branch-outline" size={29} color={isCliOutdated ? "#FF9500" : "#5856D6"} />}
                                 showChevron={false}
                             />
                         )}
-                        {session.metadata.os && (
+                        {!!os && (
                             <Item
                                 title={t('sessionInfo.operatingSystem')}
-                                subtitle={formatOSPlatform(session.metadata.os)}
+                                subtitle={formatOSPlatform(os)}
                                 icon={<Ionicons name="hardware-chip-outline" size={29} color="#5856D6" />}
                                 showChevron={false}
                             />
@@ -436,18 +444,18 @@ function SessionInfoContent({ session }: { session: Session }) {
                             icon={<Ionicons name="warning-outline" size={29} color="#5856D6" />}
                             showChevron={false}
                         />
-                        {session.metadata.hostPid && (
+                        {hostPid !== null && hostPid !== undefined && (
                             <Item
                                 title={t('sessionInfo.processId')}
-                                subtitle={session.metadata.hostPid.toString()}
+                                subtitle={hostPid.toString()}
                                 icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
                                 showChevron={false}
                             />
                         )}
-                        {session.metadata.happyHomeDir && (
+                        {!!happyHomeDir && (
                             <Item
                                 title={t('sessionInfo.happyHome')}
-                                subtitle={formatPathRelativeToHome(session.metadata.happyHomeDir, session.metadata.homeDir)}
+                                subtitle={formatPathRelativeToHome(happyHomeDir, session.metadata.homeDir)}
                                 icon={<Ionicons name="home-outline" size={29} color="#5856D6" />}
                                 showChevron={false}
                             />

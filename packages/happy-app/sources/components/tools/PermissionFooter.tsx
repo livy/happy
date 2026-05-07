@@ -464,7 +464,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, 
                 )}
 
                 {/* Allow for session button - only show for non-edit, non-exit-plan tools */}
-                {toolName && toolName !== 'Edit' && toolName !== 'MultiEdit' && toolName !== 'Write' && toolName !== 'NotebookEdit' && toolName !== 'exit_plan_mode' && toolName !== 'ExitPlanMode' && (
+                {!!toolName && toolName !== 'Edit' && toolName !== 'MultiEdit' && toolName !== 'Write' && toolName !== 'NotebookEdit' && toolName !== 'exit_plan_mode' && toolName !== 'ExitPlanMode' && (
                     <TouchableOpacity
                         style={[
                             styles.button,

@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger';
 import { exec, ExecOptions } from 'child_process';
 import { promisify } from 'util';
-import { readFile, writeFile, readdir, stat } from 'fs/promises';
+import { open, readFile, writeFile, readdir, stat } from 'fs/promises';
 import { createHash } from 'crypto';
 import { join } from 'path';
 import { run as runRipgrep } from '@/modules/ripgrep/index';
@@ -32,6 +32,22 @@ interface ReadFileRequest {
 interface ReadFileResponse {
     success: boolean;
     content?: string; // base64 encoded
+    error?: string;
+}
+
+interface ReadFileChunkRequest {
+    path: string;
+    offset: number;
+    length: number;
+}
+
+interface ReadFileChunkResponse {
+    success: boolean;
+    content?: string; // base64 encoded
+    offset?: number;
+    length?: number;
+    totalSize?: number;
+    done?: boolean;
     error?: string;
 }
 
@@ -238,6 +254,59 @@ export function registerCommonHandlers(rpcHandlerManager: RpcHandlerManager, wor
         } catch (error) {
             logger.debug('Failed to read file:', error);
             return { success: false, error: error instanceof Error ? error.message : 'Failed to read file' };
+        }
+    });
+
+    // Read file chunk handler - returns a bounded base64 encoded slice for large downloads
+    rpcHandlerManager.registerHandler<ReadFileChunkRequest, ReadFileChunkResponse>('readFileChunk', async (data) => {
+        logger.debug('Read file chunk request:', data.path, { offset: data.offset, length: data.length });
+
+        const validation = validatePath(data.path, workingDirectory);
+        if (!validation.valid) {
+            return { success: false, error: validation.error };
+        }
+
+        const offset = Number.isFinite(data.offset) ? Math.max(0, Math.floor(data.offset)) : 0;
+        const length = Number.isFinite(data.length) ? Math.max(1, Math.floor(data.length)) : 256 * 1024;
+        const boundedLength = Math.min(length, 512 * 1024);
+
+        let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
+        try {
+            const stats = await stat(validation.resolvedPath!);
+            if (!stats.isFile()) {
+                return { success: false, error: 'Path is not a file' };
+            }
+
+            if (offset >= stats.size) {
+                return {
+                    success: true,
+                    content: '',
+                    offset,
+                    length: 0,
+                    totalSize: stats.size,
+                    done: true,
+                };
+            }
+
+            const readLength = Math.min(boundedLength, stats.size - offset);
+            const buffer = Buffer.allocUnsafe(readLength);
+            fileHandle = await open(validation.resolvedPath!, 'r');
+            const { bytesRead } = await fileHandle.read(buffer, 0, readLength, offset);
+            const chunk = bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead);
+
+            return {
+                success: true,
+                content: chunk.toString('base64'),
+                offset,
+                length: bytesRead,
+                totalSize: stats.size,
+                done: offset + bytesRead >= stats.size,
+            };
+        } catch (error) {
+            logger.debug('Failed to read file chunk:', error);
+            return { success: false, error: error instanceof Error ? error.message : 'Failed to read file chunk' };
+        } finally {
+            await fileHandle?.close();
         }
     });
 

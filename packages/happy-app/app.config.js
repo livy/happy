@@ -1,4 +1,9 @@
 const variant = process.env.APP_ENV || 'development';
+const defaultServerUrl = 'https://api.cluster-fluster.com';
+const serverUrl =
+    process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ||
+    process.env.EXPO_PUBLIC_SERVER_URL ||
+    defaultServerUrl;
 const name = {
     development: "Happy (dev)",
     preview: "Happy (preview)",
@@ -162,9 +167,9 @@ export default {
             ]
         ],
         updates: {
-            url: "https://u.expo.dev/4558dd3d-cd5a-47cd-bad9-e591a241cc06",
+            url: `${serverUrl}/api/manifest`,
             requestHeaders: {
-                "expo-channel-name": "production"
+                "expo-channel-name": variant
             }
         },
         experiments: {

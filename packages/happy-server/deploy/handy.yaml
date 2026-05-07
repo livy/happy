@@ -35,9 +35,16 @@ spec:
           value: redis://happy-redis:6379
         - name: S3_PUBLIC_URL
           value: https://files.cluster-fluster.com/happy
+        - name: HAPPY_OTA_UPDATES_DIR
+          value: /data/happy-ota-updates
+        - name: HAPPY_OTA_PUBLIC_URL
+          value: https://api.cluster-fluster.com
         envFrom:
         - secretRef:
             name: handy-secrets
+        volumeMounts:
+        - name: happy-ota-updates
+          mountPath: /data/happy-ota-updates
         livenessProbe:
           httpGet:
             path: /health
@@ -54,6 +61,20 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
+      volumes:
+      - name: happy-ota-updates
+        persistentVolumeClaim:
+          claimName: happy-ota-updates
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: happy-ota-updates
+spec:
+  accessModes: [ "ReadWriteMany" ]
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

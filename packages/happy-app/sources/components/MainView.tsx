@@ -11,6 +11,7 @@ import { FABWide } from './FABWide';
 import { TabBar, TabType } from './TabBar';
 import { InboxView } from './InboxView';
 import { SettingsViewWrapper } from './SettingsViewWrapper';
+import { ProjectsView } from './ProjectsView';
 import { SessionsListWrapper } from './SessionsListWrapper';
 import { Header } from './navigation/Header';
 import { HeaderLogo } from './HeaderLogo';
@@ -102,11 +103,12 @@ const styles = StyleSheet.create((theme) => ({
 const TAB_TITLES = {
     sessions: 'tabs.sessions',
     inbox: 'tabs.inbox',
+    projects: 'tabs.projects',
     settings: 'tabs.settings',
 } as const;
 
 // Active tabs
-type ActiveTabType = 'sessions' | 'inbox' | 'settings';
+type ActiveTabType = 'sessions' | 'inbox' | 'projects' | 'settings';
 
 // Header title component with connection status
 const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
@@ -250,6 +252,8 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                 return <InboxView />;
             case 'settings':
                 return <SettingsViewWrapper />;
+            case 'projects':
+                return <ProjectsView />;
             case 'sessions':
             default:
                 return <SessionsListWrapper />;

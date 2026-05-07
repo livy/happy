@@ -194,11 +194,16 @@ describe('settings', () => {
                 reviewPromptAnswered: false,
                 reviewPromptLikedApp: null,
                 voiceAssistantLanguage: null,
+                voiceInputProvider: 'elevenlabs',
+                voiceDashScopeApiKey: null,
+                voiceCustomAgentId: null,
+                voiceBypassToken: false,
                 preferredLanguage: null,
                 recentMachinePaths: [],
                 lastUsedAgent: null,
                 lastUsedPermissionMode: null,
                 lastUsedModelMode: null,
+                fileDiffsSidebar: false,
                 dismissedCLIWarnings: { perMachine: {}, global: {} },
             });
         });

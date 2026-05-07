@@ -352,17 +352,76 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const sessionUsage = useSessionUsage(sessionId);
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
     const experiments = useSetting('experiments');
-    const expResumeSession = useSetting('expResumeSession');
-    const { canResume, resumeSession, resumingSession } = useSessionQuickActions(session);
+    const { canResume, resumeSession, resumeSessionAsync, resumingSession } = useSessionQuickActions(session);
+    const [sendingMessage, setSendingMessage] = React.useState(false);
     const isArchivedSession = session.metadata?.lifecycleState === 'archived';
     const isDisconnected = !sessionStatus.isConnected;
     const isInactiveArchivedSession = isArchivedSession && isDisconnected;
     const resumeCommandBlock = getResumeCommandBlock(session);
-    const canSendMessage = sessionStatus.state === 'waiting';
+    const canResumeAndSendMessage = isDisconnected && canResume;
+    const canSendMessage = (sessionStatus.state === 'waiting' || canResumeAndSendMessage) && !sendingMessage && !resumingSession;
     const canAbortSession = sessionStatus.state === 'thinking' || sessionStatus.state === 'permission_required';
 
     // Use draft hook for auto-saving message drafts
     const { clearDraft } = useDraft(sessionId, message, setMessage);
+
+    const waitForSessionCanSend = React.useCallback(async (targetSessionId: string) => {
+        for (let attempt = 0; attempt < 24; attempt += 1) {
+            const target = storage.getState().sessions[targetSessionId];
+            const hasPendingPermission = !!(target?.agentState?.requests && Object.keys(target.agentState.requests).length > 0);
+            if (target?.presence === 'online' && !target.thinking && !hasPendingPermission) {
+                return;
+            }
+
+            if (attempt === 4 || attempt === 12) {
+                await sync.refreshSessions().catch(() => undefined);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
+        throw new Error('Session resumed, but is not ready to receive messages yet.');
+    }, []);
+
+    const handleSendMessage = React.useCallback(() => {
+        const text = message.trim();
+        if (!text || !canSendMessage || sendingMessage) {
+            return;
+        }
+
+        void (async () => {
+            setSendingMessage(true);
+            try {
+                let targetSessionId = sessionId;
+
+                if (sessionStatus.state !== 'waiting') {
+                    if (!canResume) {
+                        return;
+                    }
+                    targetSessionId = await resumeSessionAsync();
+                    await waitForSessionCanSend(targetSessionId);
+                }
+
+                setMessage('');
+                clearDraft();
+                await sync.sendMessage(targetSessionId, text, { source: 'chat' });
+            } catch (error) {
+                Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
+            } finally {
+                setSendingMessage(false);
+            }
+        })();
+    }, [
+        canResume,
+        canSendMessage,
+        clearDraft,
+        message,
+        resumeSessionAsync,
+        sendingMessage,
+        sessionId,
+        sessionStatus.state,
+        waitForSessionCanSend,
+    ]);
 
     // Handle dismissing CLI version warning
     const handleDismissCliWarning = React.useCallback(() => {
@@ -502,13 +561,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 isPulsing: sessionStatus.isPulsing
             }}
             blockSend={!canSendMessage}
-            onSend={() => {
-                if (canSendMessage && message.trim()) {
-                    setMessage('');
-                    clearDraft();
-                    sync.sendMessage(sessionId, message, { source: 'chat' });
-                }
-            }}
+            onSend={handleSendMessage}
             onMicPress={isDisconnected ? undefined : micButtonState.onMicPress}
             isMicActive={isDisconnected ? false : micButtonState.isMicActive}
             onAbort={canAbortSession ? () => sessionAbort(sessionId) : undefined}
@@ -536,7 +589,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const archivedHint = isInactiveArchivedSession ? (
         <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
             <InactiveArchivedHint
-                resumeCommandBlock={expResumeSession ? resumeCommandBlock : null}
+                resumeCommandBlock={resumeCommandBlock}
                 canResume={canResume}
                 resuming={resumingSession}
                 onResume={resumeSession}
@@ -551,7 +604,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         </>
     ) : (
         <>
-            {expResumeSession && isDisconnected && resumeCommandBlock && (
+            {isDisconnected && resumeCommandBlock && (
                 <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
                     <ResumeCommandHint resumeCommandBlock={resumeCommandBlock} />
                 </CenteredInputWidth>

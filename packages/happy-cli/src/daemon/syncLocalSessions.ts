@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 
 import type { ApiClient } from '@/api/api';
 import type { Metadata } from '@/api/types';
+import { encodeBase64 } from '@/api/encryption';
 import type { RawJSONLines } from '@/claude/types';
 import {
   mapClaudeLogMessageToSessionEnvelopes,
@@ -15,6 +16,7 @@ import {
 } from '@/codex/utils/sessionProtocolMapper';
 import { configuration } from '@/configuration';
 import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
+import { persistSession } from '@/persistence';
 import { projectPath } from '@/projectPath';
 import packageJson from '../../package.json';
 
@@ -33,6 +35,8 @@ export interface SyncLocalSessionsResultItem {
   path: string;
   title: string | null;
   updatedAt: number;
+  active: boolean;
+  activeAt: number;
   flavor: 'claude' | 'codex';
 }
 
@@ -149,9 +153,13 @@ export async function syncLocalSessions({
     if (!detail.hasConversationContent) {
       continue;
     }
+    if (isHappyCliPath(detail.cwd)) {
+      continue;
+    }
 
     const tag = `local-import:${machineId}:${file.flavor}:${file.sessionId}`;
     const updatedAt = detail.updatedAt || file.mtimeMs;
+    const activeAt = detail.isRunning ? detail.activityAt : updatedAt;
     const metadata: Metadata = {
       path: detail.cwd || os.homedir(),
       host: os.hostname(),
@@ -164,8 +172,8 @@ export async function syncLocalSessions({
       happyToolsDir: resolve(projectPath(), 'tools', 'unpacked'),
       startedFromDaemon: false,
       startedBy: 'terminal',
-      lifecycleState: 'archived',
-      lifecycleStateSince: updatedAt,
+      lifecycleState: detail.isRunning ? 'running' : 'archived',
+      lifecycleStateSince: activeAt,
       flavor: file.flavor,
       ...(detail.title ? { name: detail.title } : {}),
       ...(file.flavor === 'codex'
@@ -182,13 +190,22 @@ export async function syncLocalSessions({
       tag,
       metadata,
       state: null,
-      active: false,
-      activeAt: updatedAt,
+      active: detail.isRunning,
+      activeAt,
       createdAt: updatedAt,
-      updatedAt,
+      updatedAt: activeAt,
     });
 
     if (session) {
+      persistSession(session.id, {
+        encryptionKey: encodeBase64(session.encryptionKey),
+        encryptionVariant: session.encryptionVariant,
+        seq: session.seq,
+        metadataVersion: session.metadataVersion,
+        agentStateVersion: session.agentStateVersion,
+        metadata,
+        savedAt: Date.now(),
+      });
       importedSessions.push({
         id: session.id,
         tag,
@@ -196,6 +213,8 @@ export async function syncLocalSessions({
         path: metadata.path,
         title: detail.title,
         updatedAt,
+        active: detail.isRunning,
+        activeAt,
         flavor: file.flavor,
       });
     }
@@ -296,6 +315,13 @@ function getClaudeProjectsDir(): string {
 
 function getCodexSessionsDir(): string {
   return join(process.env.CODEX_HOME || join(os.homedir(), '.codex'), 'sessions');
+}
+
+function isHappyCliPath(value: string | null | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  return value.split(/[\\/]+/).includes('happy-cli');
 }
 
 async function listLocalHistoryFiles(flavor: SyncLocalSessionsFlavor): Promise<LocalHistoryFile[]> {
@@ -460,19 +486,22 @@ async function readClaudeHistoryFile(file: ClaudeHistoryFile): Promise<{
   title: string | null;
   summary: string | null;
   updatedAt: number;
+  activityAt: number;
   currentModelCode?: string | null;
   hasConversationContent: boolean;
+  isRunning: boolean;
 }> {
   let raw = '';
   try {
     raw = await fs.readFile(file.filePath, 'utf8');
   } catch {
-    return { cwd: null, title: null, summary: null, updatedAt: file.mtimeMs, currentModelCode: null, hasConversationContent: false };
+    return { cwd: null, title: null, summary: null, updatedAt: file.mtimeMs, activityAt: file.mtimeMs, currentModelCode: null, hasConversationContent: false, isRunning: false };
   }
 
   let cwd: string | null = null;
   let summary: string | null = null;
   let updatedAt = file.mtimeMs;
+  let activityAt = file.mtimeMs;
   let hasConversationContent = false;
 
   for (const line of raw.split('\n')) {
@@ -497,6 +526,7 @@ async function readClaudeHistoryFile(file: ClaudeHistoryFile): Promise<{
       if (typeof record.timestamp === 'string') {
         const timestamp = Date.parse(record.timestamp);
         if (Number.isFinite(timestamp)) {
+          activityAt = timestamp;
           updatedAt = timestamp;
         }
       }
@@ -513,7 +543,7 @@ async function readClaudeHistoryFile(file: ClaudeHistoryFile): Promise<{
     }
   }
 
-  return { cwd, title: summary, summary, updatedAt, currentModelCode: null, hasConversationContent };
+  return { cwd, title: summary, summary, updatedAt, activityAt, currentModelCode: null, hasConversationContent, isRunning: false };
 }
 
 async function readCodexHistoryFile(file: CodexHistoryFile, nativeTitle: string | null): Promise<{
@@ -521,18 +551,25 @@ async function readCodexHistoryFile(file: CodexHistoryFile, nativeTitle: string 
   title: string | null;
   summary: string | null;
   updatedAt: number;
+  activityAt: number;
   currentModelCode?: string | null;
   hasConversationContent: boolean;
+  isRunning: boolean;
 }> {
   const records = await readCodexHistoryRecords(file);
   let cwd: string | null = null;
   let title: string | null = nativeTitle;
   let currentModelCode: string | null = null;
   let updatedAt = file.mtimeMs;
+  let activityAt = file.mtimeMs;
   let hasConversationContent = false;
+  let turnRunning = false;
 
   for (const record of records) {
     const timestamp = parseRecordTimestamp(record.timestamp);
+    if (timestamp !== null) {
+      activityAt = timestamp;
+    }
 
     const payload = isRecord(record.payload) ? record.payload : {};
     if (record.type === 'session_meta') {
@@ -556,6 +593,7 @@ async function readCodexHistoryFile(file: CodexHistoryFile, nativeTitle: string 
       const type = payload.type;
       if (type === 'user_message' && typeof payload.message === 'string' && payload.message.trim().length > 0) {
         hasConversationContent = true;
+        turnRunning = true;
         if (timestamp !== null) {
           updatedAt = timestamp;
         }
@@ -564,11 +602,15 @@ async function readCodexHistoryFile(file: CodexHistoryFile, nativeTitle: string 
         if (timestamp !== null) {
           updatedAt = timestamp;
         }
+      } else if (type === 'task_complete' || type === 'turn_aborted') {
+        turnRunning = false;
       }
+    } else if (record.type === 'response_item' && isCodexResponseItemActivity(payload)) {
+      turnRunning = true;
     }
   }
 
-  return { cwd, title, summary: title, updatedAt, currentModelCode, hasConversationContent };
+  return { cwd, title, summary: title, updatedAt, activityAt, currentModelCode, hasConversationContent, isRunning: turnRunning };
 }
 
 async function readClaudeHistoryRecords(file: ClaudeHistoryFile): Promise<RawJSONLines[]> {
@@ -778,6 +820,14 @@ function getCodexFunctionCommand(payload: Record<string, unknown>): unknown {
     return args.command;
   }
   return payload.name;
+}
+
+function isCodexResponseItemActivity(payload: Record<string, unknown>): boolean {
+  return payload.type === 'reasoning'
+    || payload.type === 'function_call'
+    || payload.type === 'function_call_output'
+    || payload.type === 'custom_tool_call'
+    || payload.type === 'custom_tool_call_output';
 }
 
 function withEnvelopeHistoryTime<T extends { time: number }>(envelope: T, time: number): T {

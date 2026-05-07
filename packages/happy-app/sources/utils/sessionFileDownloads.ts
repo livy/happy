@@ -2,9 +2,23 @@ import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
-import { sessionReadFile } from '@/sync/ops';
+import { sessionReadFileChunk } from '@/sync/ops';
+import { apiSocket } from '@/sync/apiSocket';
 
 const DOWNLOADS_DIR_NAME = 'Happy Downloads';
+const DOWNLOAD_CHUNK_BYTES = 12 * 1024;
+const DOWNLOAD_CHUNK_MAX_ATTEMPTS = 6;
+const DOWNLOAD_RETRY_BASE_DELAY_MS = 800;
+
+export interface SessionFileDownloadProgress {
+    bytesDownloaded: number;
+    totalBytes?: number;
+    done: boolean;
+}
+
+export interface SaveSessionFileOptions {
+    onProgress?: (progress: SessionFileDownloadProgress) => void;
+}
 
 const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
     txt: 'text/plain',
@@ -73,29 +87,151 @@ async function downloadInBrowser(contentBase64: string, fileName: string, mimeTy
     return fileName;
 }
 
-export async function saveSessionFileToDevice(sessionId: string, filePath: string): Promise<{ uri: string; fileName: string; mimeType: string }> {
-    const response = await sessionReadFile(sessionId, filePath);
-    if (!response.success || typeof response.content !== 'string') {
-        throw new Error(response.error || 'Failed to download file.');
+async function readRemoteFileInChunks(
+    sessionId: string,
+    filePath: string,
+    onChunk: (contentBase64: string, offset: number, length: number) => Promise<void>,
+    onProgress?: (progress: SessionFileDownloadProgress) => void
+): Promise<void> {
+    let offset = 0;
+    let bytesDownloaded = 0;
+    let totalBytes: number | undefined;
+
+    while (true) {
+        const response = await readRemoteFileChunkWithRetry(sessionId, filePath, offset);
+        if (!response.success || typeof response.content !== 'string') {
+            throw new Error(response.error || 'Failed to download file.');
+        }
+
+        const chunkLength = response.length ?? 0;
+        totalBytes = response.totalSize ?? totalBytes;
+        if (response.content.length > 0 || chunkLength > 0) {
+            await onChunk(response.content, response.offset ?? offset, chunkLength);
+        }
+        bytesDownloaded = Math.max(bytesDownloaded, (response.offset ?? offset) + chunkLength);
+        onProgress?.({
+            bytesDownloaded,
+            totalBytes,
+            done: response.done ?? false,
+        });
+
+        if (response.done) {
+            return;
+        }
+        if (chunkLength <= 0) {
+            throw new Error('Download stalled while reading file.');
+        }
+        offset = (response.offset ?? offset) + chunkLength;
+    }
+}
+
+type ReadChunkResult = Awaited<ReturnType<typeof sessionReadFileChunk>>;
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableDownloadError(errorMessage: string): boolean {
+    const normalized = errorMessage.toLowerCase();
+    return normalized.includes('network request failed')
+        || normalized.includes('timeout')
+        || normalized.includes('transport')
+        || normalized.includes('disconnected')
+        || normalized.includes('rpc call failed');
+}
+
+function formatDownloadErrorContext(filePath: string, offset: number, attempt: number, errorMessage: string): string {
+    return `Failed to download "${getFileName(filePath)}" at byte ${offset} on attempt ${attempt}: ${errorMessage}`;
+}
+
+async function readRemoteFileChunkWithRetry(
+    sessionId: string,
+    filePath: string,
+    offset: number
+): Promise<ReadChunkResult> {
+    let lastError: string | undefined;
+
+    for (let attempt = 1; attempt <= DOWNLOAD_CHUNK_MAX_ATTEMPTS; attempt += 1) {
+        if (apiSocket.getStatus() !== 'connected') {
+            try {
+                await apiSocket.waitForConnected(20_000);
+            } catch (error) {
+                lastError = error instanceof Error ? error.message : 'Socket is not connected';
+                if (attempt === DOWNLOAD_CHUNK_MAX_ATTEMPTS) {
+                    return {
+                        success: false,
+                        error: formatDownloadErrorContext(filePath, offset, attempt, lastError),
+                    };
+                }
+                await sleep(DOWNLOAD_RETRY_BASE_DELAY_MS * attempt);
+                continue;
+            }
+        }
+
+        const response = await sessionReadFileChunk(sessionId, filePath, offset, DOWNLOAD_CHUNK_BYTES);
+        if (response.success) {
+            return response;
+        }
+
+        lastError = response.error || 'Failed to download file.';
+        if (!isRetryableDownloadError(lastError) || attempt === DOWNLOAD_CHUNK_MAX_ATTEMPTS) {
+            return {
+                ...response,
+                error: formatDownloadErrorContext(filePath, offset, attempt, lastError),
+            };
+        }
+
+        await sleep(DOWNLOAD_RETRY_BASE_DELAY_MS * attempt);
     }
 
+    return {
+        success: false,
+        error: formatDownloadErrorContext(
+            filePath,
+            offset,
+            DOWNLOAD_CHUNK_MAX_ATTEMPTS,
+            lastError || 'Failed to download file.'
+        ),
+    };
+}
+
+export async function saveSessionFileToDevice(
+    sessionId: string,
+    filePath: string,
+    options: SaveSessionFileOptions = {}
+): Promise<{ uri: string; fileName: string; mimeType: string }> {
     const fileName = getFileName(filePath);
     const mimeType = getMimeType(fileName);
 
     if (Platform.OS === 'web') {
-        const uri = await downloadInBrowser(response.content, fileName, mimeType);
+        const chunks: string[] = [];
+        await readRemoteFileInChunks(sessionId, filePath, async (content) => {
+            chunks.push(content);
+        }, options.onProgress);
+        const uri = await downloadInBrowser(chunks.join(''), fileName, mimeType);
         return { uri, fileName, mimeType };
     }
 
     const downloadsDirectory = await ensureDownloadsDirectory();
     const fileUri = `${downloadsDirectory}${encodeURIComponent(fileName)}`;
-    await FileSystem.writeAsStringAsync(fileUri, response.content, { encoding: FileSystem.EncodingType.Base64 });
+    await FileSystem.deleteAsync(fileUri, { idempotent: true });
+    let isFirstChunk = true;
+    let wroteChunk = false;
+    await readRemoteFileInChunks(sessionId, filePath, async (content) => {
+        await FileSystem.writeAsStringAsync(fileUri, content, {
+            encoding: FileSystem.EncodingType.Base64,
+            append: !isFirstChunk,
+        });
+        isFirstChunk = false;
+        wroteChunk = true;
+    }, options.onProgress);
+    if (!wroteChunk) {
+        await FileSystem.writeAsStringAsync(fileUri, '');
+    }
     return { uri: fileUri, fileName, mimeType };
 }
 
-export async function openSessionFileExternally(sessionId: string, filePath: string): Promise<void> {
-    const downloaded = await saveSessionFileToDevice(sessionId, filePath);
-
+export async function openDownloadedFileExternally(downloaded: { uri: string; fileName: string; mimeType: string }): Promise<void> {
     if (Platform.OS === 'web') {
         return;
     }
@@ -123,4 +259,9 @@ export async function openSessionFileExternally(sessionId: string, filePath: str
     }
 
     throw new Error(`File saved to ${downloaded.uri}, but no external opener is available.`);
+}
+
+export async function openSessionFileExternally(sessionId: string, filePath: string): Promise<void> {
+    const downloaded = await saveSessionFileToDevice(sessionId, filePath);
+    await openDownloadedFileExternally(downloaded);
 }

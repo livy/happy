@@ -91,6 +91,8 @@ type MachineSyncLocalSessionsResponse = {
         path: string;
         title: string | null;
         updatedAt: number;
+        active: boolean;
+        activeAt: number;
         flavor: 'claude' | 'codex';
     }>;
 };
@@ -1099,6 +1101,45 @@ class Sync {
         return this.sessionsSync.invalidateAndAwait();
     }
 
+    public applyLocalSessionSyncResult = (result: MachineSyncLocalSessionsResponse) => {
+        const syncedById = new Map(result.sessions.map((session) => [session.id, session]));
+        if (syncedById.size === 0) {
+            return;
+        }
+
+        const patchedSessions = Object.values(storage.getState().sessions)
+            .filter((session) => syncedById.has(session.id))
+            .map((session) => {
+                const synced = syncedById.get(session.id)!;
+                return {
+                    ...session,
+                    active: synced.active,
+                    activeAt: synced.activeAt,
+                    updatedAt: Math.max(session.updatedAt, synced.activeAt),
+                    metadata: session.metadata
+                        ? {
+                            ...session.metadata,
+                            ...(synced.title ? {
+                                name: synced.title,
+                                summary: {
+                                    text: synced.title,
+                                    updatedAt: session.metadata.summary?.updatedAt ?? synced.updatedAt,
+                                },
+                            } : {}),
+                            ...(synced.active ? {
+                                lifecycleState: 'running',
+                                lifecycleStateSince: synced.activeAt,
+                            } : {}),
+                        }
+                        : session.metadata,
+                };
+            });
+
+        if (patchedSessions.length > 0) {
+            this.applySessions(patchedSessions);
+        }
+    }
+
     public loadMoreSessions = async () => {
         if (!this.credentials || !this.sessionsHasMore || !this.sessionsNextCursor || this.isLoadingMoreSessions) {
             return;
@@ -1559,8 +1600,8 @@ class Sync {
 
             log.log(`🕘 autoSyncLocalSessions completed for ${machineId}: imported=${result.imported}, scanned=${result.scanned}, hasMore=${result.hasMore}`);
             if (result.imported > 0) {
-                this.sessionsReplaceMachineIds.add(machineId);
-                this.sessionsSync.invalidate();
+                await this.refreshSessionsForMachine(machineId);
+                this.applyLocalSessionSyncResult(result);
             }
         } catch (error) {
             log.log(`🕘 autoSyncLocalSessions skipped for ${machineId}: ${error instanceof Error ? error.message : String(error)}`);

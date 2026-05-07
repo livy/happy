@@ -1,5 +1,6 @@
 import React from 'react';
 import { RealtimeVoiceSession } from './RealtimeVoiceSession';
+import { DashScopeAsrVoiceSession } from './DashScopeAsrVoiceSession';
 import { useVoiceSessionGeneration } from '@/sync/storage';
 
 export const RealtimeProvider = ({ children }: { children: React.ReactNode }) => {
@@ -9,6 +10,7 @@ export const RealtimeProvider = ({ children }: { children: React.ReactNode }) =>
     return (
         <>
             <RealtimeVoiceSession key={generation} />
+            <DashScopeAsrVoiceSession />
             {children}
         </>
     );

@@ -159,21 +159,22 @@ export async function startDaemon(): Promise<void> {
     // Retain session data after process exits so resume can still find it.
     // Pre-populate from disk so sessions survive daemon restarts.
     const sessionIdToFinishedSession = new Map<string, TrackedSession>();
+    const trackedSessionFromPersisted = (id: string, s: PersistedSession): TrackedSession => ({
+      startedBy: 'persisted',
+      happySessionId: id,
+      happySessionMetadataFromLocalWebhook: s.metadata,
+      encryption: {
+        encryptionKey: decodeBase64(s.encryptionKey),
+        encryptionVariant: s.encryptionVariant,
+        seq: s.seq,
+        metadataVersion: s.metadataVersion,
+        agentStateVersion: s.agentStateVersion,
+      },
+      pid: 0,
+    });
     const persisted = readPersistedSessions();
     for (const [id, s] of Object.entries(persisted)) {
-      sessionIdToFinishedSession.set(id, {
-        startedBy: 'persisted',
-        happySessionId: id,
-        happySessionMetadataFromLocalWebhook: s.metadata,
-        encryption: {
-          encryptionKey: decodeBase64(s.encryptionKey),
-          encryptionVariant: s.encryptionVariant,
-          seq: s.seq,
-          metadataVersion: s.metadataVersion,
-          agentStateVersion: s.agentStateVersion,
-        },
-        pid: 0,
-      });
+      sessionIdToFinishedSession.set(id, trackedSessionFromPersisted(id, s));
     }
     if (Object.keys(persisted).length > 0) {
       logger.debug(`[DAEMON RUN] Loaded ${Object.keys(persisted).length} persisted sessions from disk`);
@@ -606,7 +607,14 @@ export async function startDaemon(): Promise<void> {
       for (const session of pidToTrackedSession.values()) {
         if (session.happySessionId === happySessionId) return session;
       }
-      return sessionIdToFinishedSession.get(happySessionId);
+      const cached = sessionIdToFinishedSession.get(happySessionId);
+      if (cached) return cached;
+
+      const persistedSession = readPersistedSessions()[happySessionId];
+      if (!persistedSession) return undefined;
+      const tracked = trackedSessionFromPersisted(happySessionId, persistedSession);
+      sessionIdToFinishedSession.set(happySessionId, tracked);
+      return tracked;
     };
 
     const fetchServerSessionMetadata = async (sessionId: string, encryptionKey: Uint8Array, encryptionVariant: 'legacy' | 'dataKey'): Promise<Metadata | null> => {
@@ -626,10 +634,31 @@ export async function startDaemon(): Promise<void> {
       }
     };
 
-    const resumeSession = async (happySessionId: string, options?: { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> => {
+    const resumeSession = async (happySessionId: string, options?: { model?: string; permissionMode?: string; metadata?: Metadata }): Promise<SpawnSessionResult> => {
       try {
         const tracked = findTrackedSessionById(happySessionId);
         if (!tracked) {
+          if (options?.metadata) {
+            const launch = buildResumeLaunch(
+              { id: happySessionId, active: false, metadata: options.metadata },
+              { startedBy: 'daemon', claudeStartingMode: 'remote' },
+            );
+
+            if (options.model) {
+              launch.args.push('--model', options.model);
+            }
+            if (options.permissionMode) {
+              launch.args.push('--permission-mode', options.permissionMode);
+            }
+
+            await fs.access(launch.cwd);
+
+            return spawnTrackedHappyProcess({
+              args: launch.args,
+              cwd: launch.cwd,
+              env: process.env,
+            });
+          }
           return { type: 'error', errorMessage: `Session ${happySessionId} is not tracked by this daemon. It may have been started before the daemon or on another machine.` };
         }
         if (!tracked.happySessionMetadataFromLocalWebhook) {

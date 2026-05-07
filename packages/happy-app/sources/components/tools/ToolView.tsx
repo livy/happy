@@ -267,7 +267,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
             {/* Permission footer - always renders when permission exists to maintain consistent height */}
             {/* AskUserQuestion has its own Submit button UI - no permission footer needed */}
-            {tool.permission && sessionId && tool.name !== 'AskUserQuestion' && (
+            {!!tool.permission && !!sessionId && tool.name !== 'AskUserQuestion' && (
                 <PermissionFooter permission={tool.permission} sessionId={sessionId} toolName={tool.name} toolInput={tool.input} metadata={props.metadata} />
             )}
         </View>

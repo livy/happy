@@ -14,7 +14,7 @@ import { Counter, Histogram, register } from 'prom-client';
 // Socket.IO removes the socket from all rooms automatically.
 
 const RPC_ROOM_PREFIX = 'rpc:';
-const RPC_CALL_TIMEOUT_MS = 30_000;
+const RPC_CALL_TIMEOUT_MS = 60_000;
 const RPC_PRESENCE_POLL_MS = 2_000;
 // Timeouts for cross-replica fetchSockets during the reconnect grace window.
 // Exponential backoff: 2s → 4s → 8s. Reduces stream pressure under load
