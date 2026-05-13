@@ -131,6 +131,10 @@ function SessionInfoContent({ session }: { session: Session }) {
     const sessionStatus = useSessionStatus(session);
     const {
         canShowResume,
+        canFork,
+        forking,
+        forkSession,
+        openDuplicateSheet,
         resumeSession,
         resumeSessionSubtitle,
     } = useSessionQuickActions(session);
@@ -142,7 +146,7 @@ function SessionInfoContent({ session }: { session: Session }) {
     const hostPid = session.metadata?.hostPid;
     const happyHomeDir = session.metadata?.happyHomeDir || null;
     const machineId = session.metadata?.machineId || null;
-    
+
     // Check if CLI version is outdated
     const isCliOutdated = !!cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
 
@@ -366,6 +370,31 @@ function SessionInfoContent({ session }: { session: Session }) {
                             subtitle={resumeSessionSubtitle}
                             icon={<Ionicons name="play-circle-outline" size={29} color="#007AFF" />}
                             onPress={resumeSession}
+                        />
+                    )}
+                    {canFork && (
+                        <Item
+                            title={t('session.forkAction')}
+                            subtitle={t('session.forkSubtitle')}
+                            icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
+                            onPress={forkSession}
+                            loading={forking}
+                        />
+                    )}
+                    {canFork && (
+                        <Item
+                            title={t('session.duplicateAction')}
+                            subtitle={t('session.duplicateSubtitle')}
+                            icon={<Ionicons name="time-outline" size={29} color="#007AFF" />}
+                            onPress={openDuplicateSheet}
+                        />
+                    )}
+                    {session.metadata?.parentSessionId && (
+                        <Item
+                            title={t('session.forkedFromLabel')}
+                            subtitle={t('session.forkedFromSubtitle')}
+                            icon={<Ionicons name="return-up-back-outline" size={29} color="#5856D6" />}
+                            onPress={() => router.push(`/session/${session.metadata!.parentSessionId}`)}
                         />
                     )}
                     <Item

@@ -3,6 +3,7 @@
 此文件夹记录 Happy 的内部工作原理，重点关注协议、后端架构、部署和 CLI 工具。从这里开始。
 
 ## 索引
+- project-architecture.md: 项目整体架构总览，覆盖 app、CLI/daemon、server、wire 包和主数据流。
 - protocol.md: 线路协议 (WebSocket)、有效载荷格式、排序和并发规则。
 - realtime-sync-and-rpc.md: 实时套接字管理和 RPC 控制流的高级概述。
 - api.md: HTTP 端点和认证流程。

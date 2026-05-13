@@ -23,6 +23,7 @@ import { feedRoutes } from "./routes/feedRoutes";
 import { kvRoutes } from "./routes/kvRoutes";
 import { v3SessionRoutes } from "./routes/v3SessionRoutes";
 import { updateRoutes } from "./routes/updateRoutes";
+import { attachmentRoutes } from "./routes/attachmentRoutes";
 import { isLocalStorage, getLocalFilesDir } from "@/storage/files";
 import * as path from "path";
 import * as fs from "fs";
@@ -40,8 +41,17 @@ export async function startApi() {
     app.register(import('@fastify/cors'), {
         origin: '*',
         allowedHeaders: '*',
-        methods: ['GET', 'POST', 'DELETE']
+        methods: ['GET', 'POST', 'PUT', 'DELETE']
     });
+
+    // Required for local-mode attachment uploads (PUT /v1/sessions/:id/attachments/:file).
+    // Fastify v5 rejects unknown media types with 415 before reaching the handler.
+    app.addContentTypeParser(
+        'application/octet-stream',
+        { parseAs: 'buffer' },
+        (_req, body, done) => done(null, body),
+    );
+
     app.get('/', function (request, reply) {
         reply.send('Welcome to Happy Server!');
     });
@@ -92,6 +102,7 @@ export async function startApi() {
     kvRoutes(typed);
     v3SessionRoutes(typed);
     updateRoutes(typed);
+    attachmentRoutes(typed);
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;

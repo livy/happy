@@ -3,7 +3,7 @@ import { ActivityIndicator, View, Pressable, FlatList, Platform } from 'react-na
 import { Text } from '@/components/StyledText';
 import { usePathname } from 'expo-router';
 import { SessionListViewItem, SessionRowData, useSessionPagination } from '@/sync/storage';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 import { type SessionState, formatLastSeen, vibingMessages } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
 import { ActiveSessionsGroupCompact } from './ActiveSessionsGroupCompact';
@@ -125,6 +125,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionTitleDisconnected: {
         color: theme.colors.textSecondary,
+    },
+    sessionSubtitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginBottom: 4,
+    },
+    sessionSubtitleIcon: {
+        color: theme.colors.text,
     },
     sessionSubtitle: {
         fontSize: 13,
@@ -445,19 +454,25 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
     const styles = stylesheet;
     const navigateToSession = useNavigateToSession();
     const [actionsAnchor, setActionsAnchor] = React.useState<SessionActionsAnchor | null>(null);
-    const status = STATUS_CONFIG[session.state];
+    const baseStatus = STATUS_CONFIG[session.state];
+    // Override to solid blue when session has unread results
+    const status = session.hasUnread
+        ? { ...baseStatus, color: '#007AFF', dotColor: '#007AFF', isPulsing: false, isConnected: baseStatus.isConnected }
+        : baseStatus;
 
     const vibingMessage = React.useMemo(() => {
         return vibingMessages[Math.floor(Math.random() * vibingMessages.length)].toLowerCase() + '…';
     }, [session.state]);
 
-    const statusText = session.state === 'thinking'
-        ? vibingMessage
-        : session.state === 'disconnected'
-            ? t('status.lastSeen', { time: formatLastSeen(session.lastConversationAt, false) })
-            : session.state === 'permission_required'
-                ? t('status.permissionRequired')
-                : t('status.online');
+    const statusText = session.hasUnread
+        ? t('status.unread')
+        : session.state === 'thinking'
+            ? vibingMessage
+            : session.state === 'disconnected'
+                ? t('status.lastSeen', { time: formatLastSeen(session.lastConversationAt, false) })
+                : session.state === 'permission_required'
+                    ? t('status.permissionRequired')
+                    : t('status.online');
 
     const handlePress = React.useCallback(() => {
         navigateToSession(session.id);
@@ -520,9 +535,18 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                     </Text>
                 </View>
 
-                <Text style={styles.sessionSubtitle} numberOfLines={1}>
-                    {session.subtitle}
-                </Text>
+                {session.path ? (
+                    <View style={styles.sessionSubtitleRow}>
+                        <Octicons name="file-directory" size={11} color={styles.sessionSubtitleIcon.color as string} />
+                        <Text style={styles.sessionSubtitle} numberOfLines={1}>
+                            {session.path.split(/[/\\]/).filter(Boolean).pop()}
+                        </Text>
+                    </View>
+                ) : (
+                    <Text style={styles.sessionSubtitle} numberOfLines={1}>
+                        {session.subtitle}
+                    </Text>
+                )}
 
                 <SessionMetaRow session={session} />
 

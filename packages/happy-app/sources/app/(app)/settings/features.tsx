@@ -16,6 +16,7 @@ export default function FeaturesSettingsScreen() {
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [expResumeSession, setExpResumeSession] = useSettingMutable('expResumeSession');
     const [fileDiffsSidebar, setFileDiffsSidebar] = useSettingMutable('fileDiffsSidebar');
+    const [expImageUpload, setExpImageUpload] = useSettingMutable('expImageUpload');
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -91,6 +92,20 @@ export default function FeaturesSettingsScreen() {
                     }
                     showChevron={false}
                 />
+                {/* Image upload hidden — broken, shipping next release
+                <Item
+                    title={t('settingsFeatures.imageUpload')}
+                    subtitle={t('settingsFeatures.imageUploadSubtitle')}
+                    icon={<Ionicons name="image-outline" size={29} color="#FF2D55" />}
+                    rightElement={
+                        <Switch
+                            value={expImageUpload}
+                            onValueChange={setExpImageUpload}
+                        />
+                    }
+                    showChevron={false}
+                />
+                */}
             </ItemGroup>
 
             {/* Privacy */}
