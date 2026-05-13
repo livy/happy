@@ -148,6 +148,15 @@ function isSandboxEnabled(metadata: Session['metadata'] | null | undefined): boo
     return !!sandbox && typeof sandbox === 'object' && (sandbox as { enabled?: unknown }).enabled === true;
 }
 
+function resolveIncomingSessionMetadata(
+    existingSession: Session | undefined,
+    incomingSession: { metadata?: Session['metadata'] | null },
+): Session['metadata'] | null {
+    // A transient decrypt/schema failure during resume should not erase the
+    // locally-known title/path and make the UI fall back to "unknown".
+    return incomingSession.metadata ?? existingSession?.metadata ?? null;
+}
+
 function machineMergeKey(machine: Machine): string {
     const metadata = machine.metadata;
     if (!metadata) {
@@ -616,13 +625,15 @@ export const storage = create<StorageState>()((set, get) => {
             sessions.forEach(session => {
                 // Use centralized resolver for consistent state management
                 const presence = resolveSessionOnlineState(session);
+                const existingSession = state.sessions[session.id];
+                const resolvedMetadata = resolveIncomingSessionMetadata(existingSession, session);
 
                 // Preserve existing draft and permission mode if they exist, or load from saved data
-                const existingDraft = state.sessions[session.id]?.draft;
+                const existingDraft = existingSession?.draft;
                 const savedDraft = savedDrafts[session.id];
-                const existingPermissionMode = state.sessions[session.id]?.permissionMode;
+                const existingPermissionMode = existingSession?.permissionMode;
                 const savedPermissionMode = savedPermissionModes[session.id];
-                const defaultPermissionMode: PermissionModeKey = isSandboxEnabled(session.metadata) ? 'bypassPermissions' : 'default';
+                const defaultPermissionMode: PermissionModeKey = isSandboxEnabled(resolvedMetadata) ? 'bypassPermissions' : 'default';
                 const resolvedPermissionMode: PermissionModeKey =
                     (existingPermissionMode && existingPermissionMode !== 'default' ? existingPermissionMode : undefined) ||
                     (savedPermissionMode && savedPermissionMode !== 'default' ? savedPermissionMode : undefined) ||
@@ -632,18 +643,19 @@ export const storage = create<StorageState>()((set, get) => {
                 // Restore model mode / effort level from MMKV on first load. If the
                 // host reports a current model, treat that as authoritative so stale
                 // local selections do not hide the model configured on the machine.
-                const existingModelMode = state.sessions[session.id]?.modelMode;
-                const existingHostModelCode = state.sessions[session.id]?.metadata?.currentModelCode;
-                const hostModelCode = session.metadata?.currentModelCode;
+                const existingModelMode = existingSession?.modelMode;
+                const existingHostModelCode = existingSession?.metadata?.currentModelCode;
+                const hostModelCode = resolvedMetadata?.currentModelCode;
                 const hostModelChanged = !!hostModelCode && hostModelCode !== existingHostModelCode;
                 const resolvedModelMode = hostModelChanged
                     ? null
                     : existingModelMode ?? (hostModelCode ? null : savedModelModes[session.id]) ?? session.modelMode ?? null;
-                const existingEffortLevel = state.sessions[session.id]?.effortLevel;
+                const existingEffortLevel = existingSession?.effortLevel;
                 const resolvedEffortLevel = existingEffortLevel ?? savedEffortLevels[session.id] ?? session.effortLevel ?? null;
 
                 mergedSessions[session.id] = {
                     ...session,
+                    metadata: resolvedMetadata,
                     presence,
                     draft: existingDraft || savedDraft || session.draft || null,
                     permissionMode: resolvedPermissionMode,

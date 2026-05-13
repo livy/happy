@@ -28,6 +28,7 @@ import { Session } from './session';
 import { applySandboxPermissionPolicy, resolveInitialClaudePermissionMode } from './utils/permissionMode';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import type { Session as ApiSession } from '@/api/types';
+import { mergeReconnectMetadata, parseReconnectMetadata } from '@/resume/reconnectMetadata';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -124,6 +125,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const reconnectSeq = process.env.HAPPY_RECONNECT_SEQ;
     const reconnectMetadataVersion = process.env.HAPPY_RECONNECT_METADATA_VERSION;
     const reconnectAgentStateVersion = process.env.HAPPY_RECONNECT_AGENT_STATE_VERSION;
+    const reconnectMetadata = parseReconnectMetadata(process.env.HAPPY_RECONNECT_METADATA);
+
+    if (reconnectMetadata) {
+        metadata = mergeReconnectMetadata(metadata, reconnectMetadata);
+    }
 
     let response: ApiSession | null;
     if (reconnectSessionId && reconnectKeyBase64 && reconnectVariant) {

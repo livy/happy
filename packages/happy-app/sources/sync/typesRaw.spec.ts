@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createId } from '@paralleldrive/cuid2';
 import { normalizeRawMessage } from './typesRaw';
 
@@ -19,6 +19,19 @@ import { normalizeRawMessage } from './typesRaw';
 import { RawRecordSchema } from './typesRaw';
 
 describe('Zod Transform - WOLOG Content Normalization', () => {
+    it('silently skips legacy top-level Claude summary records', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const normalized = normalizeRawMessage('summary-1', null, Date.now(), {
+            type: 'summary',
+            summary: 'Previous conversation title',
+            leafUuid: 'leaf-1',
+        } as any);
+
+        expect(normalized).toBeNull();
+        expect(warnSpy).not.toHaveBeenCalled();
+        warnSpy.mockRestore();
+    });
 
     describe('Accepts and transforms hyphenated types', () => {
         it('transforms tool-call to tool_use with field remapping', () => {

@@ -40,6 +40,16 @@ interface SessionBashResponse {
     error?: string;
 }
 
+function sessionBashFailure(message: string): SessionBashResponse {
+    return {
+        success: false,
+        stdout: '',
+        stderr: message,
+        exitCode: -1,
+        error: message,
+    };
+}
+
 // Read file operation types
 interface SessionReadFileRequest {
     path: string;
@@ -471,15 +481,18 @@ export async function sessionBash(sessionId: string, request: SessionBashRequest
             'bash',
             request
         );
-        return response;
-    } catch (error) {
+        if (!response || typeof response.success !== 'boolean') {
+            return sessionBashFailure('Session bash RPC returned an empty response');
+        }
         return {
-            success: false,
-            stdout: '',
-            stderr: error instanceof Error ? error.message : 'Unknown error',
-            exitCode: -1,
-            error: error instanceof Error ? error.message : 'Unknown error'
+            success: response.success,
+            stdout: typeof response.stdout === 'string' ? response.stdout : '',
+            stderr: typeof response.stderr === 'string' ? response.stderr : '',
+            exitCode: typeof response.exitCode === 'number' ? response.exitCode : -1,
+            error: response.error,
         };
+    } catch (error) {
+        return sessionBashFailure(error instanceof Error ? error.message : 'Unknown error');
     }
 }
 

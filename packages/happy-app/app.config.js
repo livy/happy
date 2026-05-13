@@ -94,6 +94,7 @@ export default {
         },
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
+            require("./plugins/withAndroidReleaseOptimization.js"),
             [
                 "expo-router",
                 {

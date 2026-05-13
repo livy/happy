@@ -453,6 +453,15 @@ export type RawRecord = z.infer<typeof rawRecordSchema>;
 // Export schemas for validation
 export const RawRecordSchema = rawRecordSchema;
 
+function shouldSilentlySkipRawRecord(raw: unknown): boolean {
+    if (!raw || typeof raw !== 'object') {
+        return true;
+    }
+
+    const rawObj = raw as { type?: unknown };
+    return rawObj.type === 'summary';
+}
+
 
 //
 // Normalized types
@@ -703,8 +712,11 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
     // Zod transform handles normalization during validation
     let parsed = rawRecordSchema.safeParse(raw);
     if (!parsed.success) {
+        if (shouldSilentlySkipRawRecord(raw)) {
+            return null;
+        }
         const rawObj = raw as any;
-        const msgType = rawObj?.content?.data?.type ?? rawObj?.content?.type ?? 'unknown';
+        const msgType = rawObj?.content?.data?.type ?? rawObj?.content?.type ?? rawObj?.type ?? 'unknown';
         console.warn(`Unrecognized message type: ${msgType} (id: ${id})`);
         return null;
     }

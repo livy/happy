@@ -33,6 +33,7 @@ import { resolveCodexExecutionPolicy } from './executionPolicy';
 import { mapCodexMcpMessageToSessionEnvelopes, mapCodexProcessorMessageToSessionEnvelopes } from './utils/sessionProtocolMapper';
 import { resumeExistingThread } from './resumeExistingThread';
 import { emitReadyIfIdle } from './emitReadyIfIdle';
+import { mergeReconnectMetadata, parseReconnectMetadata } from '@/resume/reconnectMetadata';
 
 /**
  * Extracts a human-readable error from a codex task_complete/turn_aborted event.
@@ -115,12 +116,14 @@ export async function runCodex(opts: {
     // Create session
     //
 
-    const { state, metadata } = createSessionMetadata({
+    const { state, metadata: createdMetadata } = createSessionMetadata({
         flavor: 'codex',
         machineId,
         startedBy: opts.startedBy,
         sandbox: sandboxConfig,
     });
+    const reconnectMetadata = parseReconnectMetadata(process.env.HAPPY_RECONNECT_METADATA);
+    const metadata = mergeReconnectMetadata(createdMetadata, reconnectMetadata);
 
     // Check for session reconnection env vars (set by daemon for resume-in-place)
     const reconnectSessionId = process.env.HAPPY_RECONNECT_SESSION_ID;
